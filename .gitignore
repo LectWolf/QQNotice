@@ -10,6 +10,7 @@ dist/
 .env.*
 !.env.example
 *.log
+*.tsbuildinfo
 
 # Prisma
 server/.env
