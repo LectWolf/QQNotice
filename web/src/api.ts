@@ -12,6 +12,19 @@ export type AuthUser = {
 
 export type AuthData = { token: string; user: AuthUser };
 
+export type BotStatus = {
+  botId: number;
+  qq: number;
+  name: string;
+  enabled: boolean;
+  wsState: "open" | "connecting" | "closed";
+  lastHeartbeatAt: number | null;
+  heartbeatInterval: number | null;
+  online: boolean;
+  alive: boolean;
+  friendCount: number;
+};
+
 const TOKEN_KEY = "qqnotice.token";
 
 export function getToken(): string | null {
@@ -50,4 +63,25 @@ export const api = {
   me: () => request<AuthUser>("GET", "/api/me"),
   changePassword: (input: { oldPassword: string; newPassword: string }) =>
     request("POST", "/api/me/password", input),
+
+  // Operator-only
+  listBots: () => request<BotStatus[]>("GET", "/api/admin/bots"),
+  createBot: (input: {
+    name: string;
+    qq: number;
+    wsUrl: string;
+    accessToken?: string | null;
+  }) => request<{ id: number; qq: number }>("POST", "/api/admin/bots", input),
+  updateBot: (
+    id: number,
+    input: Partial<{
+      name: string;
+      qq: number;
+      wsUrl: string;
+      accessToken: string | null;
+      enabled: boolean;
+    }>,
+  ) => request("PATCH", `/api/admin/bots/${id}`, input),
+  deleteBot: (id: number) =>
+    request("DELETE", `/api/admin/bots/${id}`),
 };

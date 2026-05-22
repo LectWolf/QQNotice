@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, getToken, setToken, type AuthUser } from "./api.js";
+import { BotsAdmin } from "./BotsAdmin.js";
 
-type View = "loading" | "login" | "register" | "home";
+type View = "loading" | "login" | "register" | "home" | "admin-bots";
 
 export function App(): JSX.Element {
   const [view, setView] = useState<View>("loading");
@@ -56,8 +57,19 @@ export function App(): JSX.Element {
           onSuccess={handleAuthSuccess}
           onSwitchToLogin={() => setView("login")}
         />
+      ) : view === "admin-bots" ? (
+        <>
+          <button onClick={() => setView("home")} style={{ alignSelf: "flex-start" }}>
+            ← 返回
+          </button>
+          <BotsAdmin />
+        </>
       ) : (
-        <Home user={user!} onLogout={handleLogout} />
+        <Home
+          user={user!}
+          onLogout={handleLogout}
+          onOpenBotsAdmin={() => setView("admin-bots")}
+        />
       )}
     </main>
   );
@@ -160,7 +172,15 @@ function RegisterForm({
   );
 }
 
-function Home({ user, onLogout }: { user: AuthUser; onLogout: () => void }): JSX.Element {
+function Home({
+  user,
+  onLogout,
+  onOpenBotsAdmin,
+}: {
+  user: AuthUser;
+  onLogout: () => void;
+  onOpenBotsAdmin: () => void;
+}): JSX.Element {
   return (
     <section style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
       <p>
@@ -173,6 +193,11 @@ function Home({ user, onLogout }: { user: AuthUser; onLogout: () => void }): JSX
         SendKey 管理界面会在后续切片中加入。当前阶段你可以通过
         <code> /api/dev/probe </code> 与 NapCat 联调。
       </p>
+      {user.isOperator && (
+        <button onClick={onOpenBotsAdmin} style={{ alignSelf: "flex-start" }}>
+          管理机器人池
+        </button>
+      )}
       <button onClick={onLogout}>退出登录</button>
     </section>
   );
