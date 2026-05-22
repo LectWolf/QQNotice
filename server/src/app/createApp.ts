@@ -6,10 +6,15 @@ import { registerAuthRoutes } from "../auth/authRoutes.js";
 import { registerMeRoutes } from "../auth/meRoutes.js";
 import { registerAuthPlugin } from "../auth/authPlugin.js";
 import { AuthService } from "../auth/AuthService.js";
+import { BotManager } from "../bot/BotManager.js";
+import { OneBotClient } from "../onebot/OneBotClient.js";
+import { registerBotAdminRoutes } from "../admin/botRoutes.js";
 
 export type AppDeps = {
   config: Config;
   prisma: PrismaClient;
+  /** Optional override for tests; default starts a real BotManager. */
+  botManager?: BotManager;
 };
 
 /**
@@ -31,10 +36,24 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
     prisma: deps.prisma,
     jwtSecret: deps.config.jwtSecret,
     inviteCode: deps.config.inviteCode,
+    adminUsername: deps.config.adminUsername,
     bcryptCost: deps.config.nodeEnv === "test" ? 4 : undefined,
   });
   registerAuthRoutes(app, authService);
   registerMeRoutes(app, authService);
+
+  const botManager =
+    deps.botManager ??
+    new BotManager({
+      prisma: deps.prisma,
+      clientFactory: (opts) => new OneBotClient(opts),
+    });
+  await botManager.start();
+  app.addHook("onClose", async () => {
+    await botManager.stop();
+  });
+
+  registerBotAdminRoutes(app, { prisma: deps.prisma, manager: botManager });
 
   if (deps.config.nodeEnv !== "production") {
     registerProbeRoute(app);
