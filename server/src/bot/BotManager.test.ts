@@ -385,3 +385,80 @@ describe("BotManager liveness via heartbeat", () => {
     await manager.stop();
   });
 });
+
+describe("BotManager scheduled friendship refresh", () => {
+  const prisma = getTestPrisma();
+
+  beforeEach(async () => {
+    await resetDb(prisma);
+  });
+
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  it("invokes refreshAllFriendsNow on the configured interval", async () => {
+    vi.useFakeTimers();
+    try {
+      let refreshCalls = 0;
+      const m = new BotManager({
+        prisma,
+        clientFactory: stubFactory,
+        reconcileIntervalMs: 60_000,
+        friendshipRefreshIntervalMs: 1000, // 1s for the test
+      });
+      // Stub refreshAllFriendsNow so the test doesn't depend on bots.
+      (m as unknown as {
+        refreshAllFriendsNow: () => Promise<unknown>;
+      }).refreshAllFriendsNow = async () => {
+        refreshCalls++;
+        return { refreshed: 0, skipped: 0, durationMs: 0 };
+      };
+
+      await m.start();
+      // Initial start() doesn't refresh (only the timer does).
+      expect(refreshCalls).toBe(0);
+
+      vi.advanceTimersByTime(1000);
+      // setInterval fires the callback synchronously; it kicks a microtask.
+      await Promise.resolve();
+      expect(refreshCalls).toBe(1);
+
+      vi.advanceTimersByTime(1000);
+      await Promise.resolve();
+      expect(refreshCalls).toBe(2);
+
+      await m.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not start the timer when friendshipRefreshIntervalMs is 0", async () => {
+    vi.useFakeTimers();
+    try {
+      let refreshCalls = 0;
+      const m = new BotManager({
+        prisma,
+        clientFactory: stubFactory,
+        reconcileIntervalMs: 60_000,
+        friendshipRefreshIntervalMs: 0,
+      });
+      (m as unknown as {
+        refreshAllFriendsNow: () => Promise<unknown>;
+      }).refreshAllFriendsNow = async () => {
+        refreshCalls++;
+        return { refreshed: 0, skipped: 0, durationMs: 0 };
+      };
+
+      await m.start();
+      vi.advanceTimersByTime(60_000);
+      await Promise.resolve();
+      expect(refreshCalls).toBe(0);
+
+      await m.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

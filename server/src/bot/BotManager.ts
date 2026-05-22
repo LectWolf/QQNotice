@@ -42,6 +42,11 @@ export type BotManagerDeps = {
   now?: () => number;
   /** How often `reconcile()` runs in the background, ms. Default 3000. */
   reconcileIntervalMs?: number;
+  /**
+   * How often a full friendship refresh is run, ms. Default 24h. Tests can
+   * shorten it; set to 0 to disable.
+   */
+  friendshipRefreshIntervalMs?: number;
 };
 
 type BotEntry = {
@@ -76,8 +81,10 @@ export class BotManager {
   private readonly pendingKeys: PendingKeyCreations | null;
   private readonly now: () => number;
   private readonly reconcileIntervalMs: number;
+  private readonly friendshipRefreshIntervalMs: number;
   private bots = new Map<number, BotEntry>();
   private timer: NodeJS.Timeout | null = null;
+  private friendshipTimer: NodeJS.Timeout | null = null;
   private stopped = false;
 
   constructor(deps: BotManagerDeps) {
@@ -87,6 +94,8 @@ export class BotManager {
     this.pendingKeys = deps.pendingKeys ?? null;
     this.now = deps.now ?? (() => Date.now());
     this.reconcileIntervalMs = deps.reconcileIntervalMs ?? 3000;
+    this.friendshipRefreshIntervalMs =
+      deps.friendshipRefreshIntervalMs ?? 24 * 60 * 60 * 1000;
   }
 
   async start(): Promise<void> {
@@ -97,6 +106,11 @@ export class BotManager {
         void this.reconcile().catch(() => {});
       }, this.reconcileIntervalMs);
     }
+    if (!this.friendshipTimer && this.friendshipRefreshIntervalMs > 0) {
+      this.friendshipTimer = setInterval(() => {
+        void this.refreshAllFriendsNow().catch(() => {});
+      }, this.friendshipRefreshIntervalMs);
+    }
   }
 
   async stop(): Promise<void> {
@@ -104,6 +118,10 @@ export class BotManager {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
+    }
+    if (this.friendshipTimer) {
+      clearInterval(this.friendshipTimer);
+      this.friendshipTimer = null;
     }
     for (const entry of this.bots.values()) {
       entry.client?.disconnect();
@@ -152,6 +170,38 @@ export class BotManager {
       throw new Error(`bot ${botId} not connected`);
     }
     return entry.client.request<T>(action, params);
+  }
+
+  /**
+   * Pulls get_friend_list for every alive bot and refreshes the friendship
+   * cache. Failures on individual bots do not abort the batch.
+   */
+  async refreshAllFriendsNow(): Promise<{
+    refreshed: number;
+    skipped: number;
+    durationMs: number;
+  }> {
+    const start = this.now();
+    let refreshed = 0;
+    let skipped = 0;
+    if (!this.friendshipCache) {
+      return { refreshed: 0, skipped: this.bots.size, durationMs: 0 };
+    }
+
+    for (const entry of this.bots.values()) {
+      if (!entry.client || entry.wsState !== "open" || !entry.online) {
+        skipped++;
+        continue;
+      }
+      try {
+        await this.pullFriends(entry);
+        refreshed++;
+      } catch {
+        skipped++;
+      }
+    }
+
+    return { refreshed, skipped, durationMs: this.now() - start };
   }
 
   /**
