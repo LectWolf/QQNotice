@@ -25,6 +25,19 @@ export type BotStatus = {
   friendCount: number;
 };
 
+export type SendKey = {
+  id: number;
+  name: string;
+  targetQq: number;
+  botId: number;
+  prefix: string;
+  state: "active" | "disabled";
+  createdAt: string;
+  lastUsedAt: string | null;
+};
+
+export type CreatedSendKey = SendKey & { plaintext: string };
+
 const TOKEN_KEY = "qqnotice.token";
 
 export function getToken(): string | null {
@@ -84,4 +97,11 @@ export const api = {
   ) => request("PATCH", `/api/admin/bots/${id}`, input),
   deleteBot: (id: number) =>
     request("DELETE", `/api/admin/bots/${id}`),
+
+  // SendKeys
+  listSendKeys: () => request<SendKey[]>("GET", "/api/me/keys"),
+  createSendKey: (input: { name: string; targetQq: number }) =>
+    request<CreatedSendKey>("POST", "/api/me/keys", input),
+  deleteSendKey: (id: number) =>
+    request("DELETE", `/api/me/keys/${id}`),
 };

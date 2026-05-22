@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { api, getToken, setToken, type AuthUser } from "./api.js";
 import { BotsAdmin } from "./BotsAdmin.js";
+import { SendKeys } from "./SendKeys.js";
 
-type View = "loading" | "login" | "register" | "home" | "admin-bots";
+type View = "loading" | "login" | "register" | "home" | "admin-bots" | "keys";
 
 export function App(): JSX.Element {
   const [view, setView] = useState<View>("loading");
@@ -64,11 +65,19 @@ export function App(): JSX.Element {
           </button>
           <BotsAdmin />
         </>
+      ) : view === "keys" ? (
+        <>
+          <button onClick={() => setView("home")} style={{ alignSelf: "flex-start" }}>
+            ← 返回
+          </button>
+          <SendKeys />
+        </>
       ) : (
         <Home
           user={user!}
           onLogout={handleLogout}
           onOpenBotsAdmin={() => setView("admin-bots")}
+          onOpenKeys={() => setView("keys")}
         />
       )}
     </main>
@@ -176,10 +185,12 @@ function Home({
   user,
   onLogout,
   onOpenBotsAdmin,
+  onOpenKeys,
 }: {
   user: AuthUser;
   onLogout: () => void;
   onOpenBotsAdmin: () => void;
+  onOpenKeys: () => void;
 }): JSX.Element {
   return (
     <section style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
@@ -189,10 +200,9 @@ function Home({
           <span style={badgeStyle}>Operator</span>
         )}
       </p>
-      <p style={{ color: "#666" }}>
-        SendKey 管理界面会在后续切片中加入。当前阶段你可以通过
-        <code> /api/dev/probe </code> 与 NapCat 联调。
-      </p>
+      <button onClick={onOpenKeys} style={{ alignSelf: "flex-start" }}>
+        我的 SendKey
+      </button>
       {user.isOperator && (
         <button onClick={onOpenBotsAdmin} style={{ alignSelf: "flex-start" }}>
           管理机器人池
