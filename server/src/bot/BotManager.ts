@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import type { OneBotClient } from "../onebot/OneBotClient.js";
 import { computeBotAlive } from "./computeBotAlive.js";
+import type { FriendshipCache } from "../friendship/FriendshipCache.js";
 
 export type BotStatus = {
   botId: number;
@@ -23,6 +24,12 @@ export type ClientFactory = (opts: {
 export type BotManagerDeps = {
   prisma: PrismaClient;
   clientFactory: ClientFactory;
+  /**
+   * Optional FriendshipCache. When provided, the manager pulls each Bot's
+   * friend list (via OneBot `get_friend_list`) the first time it transitions
+   * to alive, and writes the result into the cache via `replaceAllForBot`.
+   */
+  friendshipCache?: FriendshipCache;
   /** Injected so tests can control time; defaults to Date.now. */
   now?: () => number;
   /** How often `reconcile()` runs in the background, ms. Default 3000. */
@@ -50,11 +57,14 @@ type BotEntry = {
   sendFailureShortCircuitUntil: number;
   /** First heartbeat already logged so we don't spam. */
   firstHeartbeatSeen: boolean;
+  /** Set once we've pulled the friend list for this bot's current connection. */
+  friendsPulled: boolean;
 };
 
 export class BotManager {
   private readonly prisma: PrismaClient;
   private readonly clientFactory: ClientFactory;
+  private readonly friendshipCache: FriendshipCache | null;
   private readonly now: () => number;
   private readonly reconcileIntervalMs: number;
   private bots = new Map<number, BotEntry>();
@@ -64,6 +74,7 @@ export class BotManager {
   constructor(deps: BotManagerDeps) {
     this.prisma = deps.prisma;
     this.clientFactory = deps.clientFactory;
+    this.friendshipCache = deps.friendshipCache ?? null;
     this.now = deps.now ?? (() => Date.now());
     this.reconcileIntervalMs = deps.reconcileIntervalMs ?? 3000;
   }
@@ -118,6 +129,32 @@ export class BotManager {
   }
 
   /**
+   * Sends an OneBot action through the specified Bot's connected client.
+   * Throws if no client is currently open.
+   */
+  async request<T = unknown>(
+    botId: number,
+    action: string,
+    params?: unknown,
+  ): Promise<T> {
+    const entry = this.bots.get(botId);
+    if (!entry || !entry.client) {
+      throw new Error(`bot ${botId} not connected`);
+    }
+    return entry.client.request<T>(action, params);
+  }
+
+  /**
+   * Short-circuits a Bot to `dead` for a brief window after a send failure.
+   * The next heartbeat or successful operation lets it recover naturally.
+   */
+  markSendFailure(botId: number, durationMs = 30_000): void {
+    const entry = this.bots.get(botId);
+    if (!entry) return;
+    entry.sendFailureShortCircuitUntil = this.now() + durationMs;
+  }
+
+  /**
    * Reconciles the in-process bot map against the DB. Called by `start()`
    * once and then on a timer.
    */
@@ -141,6 +178,7 @@ export class BotManager {
           online: false,
           sendFailureShortCircuitUntil: 0,
           firstHeartbeatSeen: false,
+          friendsPulled: false,
         };
         this.bots.set(row.id, entry);
       } else {
@@ -157,6 +195,24 @@ export class BotManager {
         this.bots.delete(id);
       }
     }
+  }
+
+  /**
+   * Pulls the bot's current friend list and writes it into the friendship
+   * cache. Best-effort: failures are logged via the calling reconcile path.
+   */
+  private async pullFriends(entry: BotEntry): Promise<void> {
+    if (!this.friendshipCache || !entry.client) return;
+    type FriendInfo = { user_id: number };
+    const friends = await entry.client.request<FriendInfo[]>(
+      "get_friend_list",
+    );
+    const qqs = Array.isArray(friends)
+      ? friends
+          .map((f) => Number(f.user_id))
+          .filter((n) => Number.isFinite(n))
+      : [];
+    this.friendshipCache.replaceAllForBot(entry.row.id, qqs);
   }
 
   private reconcileEntry(entry: BotEntry): void {
@@ -226,6 +282,15 @@ export class BotManager {
           // First-heartbeat dump is the deployment-grade log; tests assert
           // observable status, not log lines.
         }
+        // Pull the friend list once after the bot first becomes alive on
+        // this connection. Re-runs on reconnect because friendsPulled is
+        // reset there.
+        if (online && !entry.friendsPulled) {
+          entry.friendsPulled = true;
+          void this.pullFriends(entry).catch(() => {
+            entry.friendsPulled = false;
+          });
+        }
       });
 
       client.on("disconnected", () => {
@@ -234,6 +299,7 @@ export class BotManager {
         entry.client = null;
         entry.clientUrl = null;
         entry.clientToken = null;
+        entry.friendsPulled = false;
       });
 
       client.connect();

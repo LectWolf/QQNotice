@@ -163,4 +163,61 @@ describe("BotManager liveness via heartbeat", () => {
 
     await manager.stop();
   });
+
+  it("populates the friendship cache from get_friend_list once the bot is alive", async () => {
+    const bot = await prisma.bot.create({
+      data: {
+        name: "primary",
+        qq: BigInt(10001),
+        wsUrl: napcat.url,
+        enabled: true,
+      },
+    });
+
+    const cache = new (await import("../friendship/FriendshipCache.js")).FriendshipCache();
+    manager = new BotManager({
+      prisma,
+      clientFactory: (opts) => new OneBotClient(opts),
+      friendshipCache: cache,
+    });
+    await manager.start();
+
+    // Stub: respond to get_friend_list, then send a heartbeat.
+    napcat.onAnyConnection((conn) => {
+      conn.socket.on("message", (raw) => {
+        const req = JSON.parse(raw.toString()) as {
+          action: string;
+          echo: string;
+        };
+        if (req.action === "get_friend_list") {
+          conn.socket.send(
+            JSON.stringify({
+              status: "ok",
+              retcode: 0,
+              data: [
+                { user_id: 12345, nickname: "alice" },
+                { user_id: 67890, nickname: "bob" },
+              ],
+              echo: req.echo,
+            }),
+          );
+        }
+      });
+      napcat.send(
+        heartbeatPayload({ selfId: 10001, interval: 5000, online: true }),
+      );
+    });
+
+    // Wait for the cache to be populated.
+    const deadline = Date.now() + 3000;
+    while (!cache.has(bot.id, 12345) && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+
+    expect(cache.has(bot.id, 12345)).toBe(true);
+    expect(cache.has(bot.id, 67890)).toBe(true);
+    expect(cache.has(bot.id, 99999)).toBe(false);
+
+    await manager.stop();
+  });
 });
