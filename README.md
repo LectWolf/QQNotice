@@ -116,15 +116,43 @@ curl -X POST http://127.0.0.1:3000/api/dev/probe ^
 stdout,方便比对字段),然后调一次 `send_private_msg`。在把机器人正式
 加到池子之前,用它快速验证连通性。
 
-## Docker 一键部署
+## 生产部署(Node + pnpm 直部署)
+
+不依赖 Docker。在目标机器上:
 
 ```sh
-docker compose up -d --build
+# 1. 同步代码
+git pull
+
+# 2. 安装依赖
+pnpm install
+
+# 3. 构建前后端
+pnpm -C web build
+pnpm -C server build
+
+# 4. 配置 env(同开发,只是把 NODE_ENV 改成 production)
+copy .env.example server\.env
+# 编辑 server\.env
+
+# 5. 应用数据库迁移
+pnpm -C server prisma migrate deploy
+
+# 6. 启动(生产模式下后端会同时把 web/dist 挂在同一个端口)
+pnpm -C server start
 ```
 
-会同时拉起 MySQL 8 容器和应用容器。`JWT_SECRET`、`INVITE_CODE`、
-`ADMIN_USERNAME`(以及可选的 `DB_PASSWORD`)通过根目录的 `.env` 或
-shell 环境提供。
+后台保活推荐用 `pm2`:
+
+```sh
+npm i -g pm2
+pm2 start "pnpm -C server start" --name qqnotice
+pm2 save
+pm2 startup     # 让进程随系统启动,按提示执行返回的命令
+```
+
+`server/dist/index.js` 会在生产模式下把 `web/dist` 挂在根路径,API 走
+`/api/*` 和 `/send*`,前端 SPA 路由走兜底 `index.html`。
 
 ## 许可证
 
