@@ -63,11 +63,12 @@ export class OneBotClient {
   }
 
   request<T>(action: string, params?: unknown, timeoutMs = 3000): Promise<T> {
-    const ws = this.ws;
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (!this.ws) {
       return Promise.reject(new Error("not connected"));
     }
+    const ws = this.ws;
     const echo = `r${++this.echoSeq}`;
+    const frame = JSON.stringify({ action, params, echo });
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(echo);
@@ -78,7 +79,13 @@ export class OneBotClient {
         reject,
         timer,
       });
-      ws.send(JSON.stringify({ action, params, echo }));
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(frame);
+      } else {
+        ws.once("open", () => {
+          if (this.pending.has(echo)) ws.send(frame);
+        });
+      }
     });
   }
 

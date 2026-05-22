@@ -11,11 +11,16 @@ export class FakeNapcat {
     socket: WebSocket;
     upgradeHeaders: IncomingMessage["headers"];
   }> = [];
+  private connectionListeners: Array<
+    (c: { socket: WebSocket; upgradeHeaders: IncomingMessage["headers"] }) => void
+  > = [];
 
   private constructor(wss: WebSocketServer) {
     this.wss = wss;
     this.wss.on("connection", (socket, req) => {
-      this.connections.push({ socket, upgradeHeaders: req.headers });
+      const c = { socket, upgradeHeaders: req.headers };
+      this.connections.push(c);
+      for (const l of this.connectionListeners) l(c);
     });
   }
 
@@ -42,6 +47,19 @@ export class FakeNapcat {
       await new Promise((r) => setTimeout(r, 5));
     }
     return this.connections[index]!;
+  }
+
+  /**
+   * Register a callback invoked synchronously the moment any new connection is
+   * established, before the test gets a chance to await `waitForConnection`.
+   * Use this to attach `message` handlers without racing the client's first
+   * outgoing frame.
+   */
+  onAnyConnection(
+    cb: (c: { socket: WebSocket; upgradeHeaders: IncomingMessage["headers"] }) => void,
+  ): void {
+    this.connectionListeners.push(cb);
+    for (const c of this.connections) cb(c);
   }
 
   /** Send a JSON event/payload to the most recent connection. */

@@ -34,6 +34,26 @@ describe("OneBotClient", () => {
     client.disconnect();
   });
 
+  it("resolves a request even when the WS handshake has not yet completed at call time", async () => {
+    const client = new OneBotClient({ url: napcat.url });
+
+    napcat.onAnyConnection((conn) => {
+      conn.socket.on("message", (raw) => {
+        const req = JSON.parse(raw.toString()) as { echo: string };
+        conn.socket.send(JSON.stringify({ data: { ok: true }, echo: req.echo }));
+      });
+    });
+
+    client.connect();
+    // Issue the request *before* awaiting the connection — exercises the
+    // race that can happen when callers don't synchronise on connect().
+    const result = await client.request<{ ok: true }>("get_login_info");
+
+    expect(result).toEqual({ ok: true });
+
+    client.disconnect();
+  });
+
   it("resolves a request by matching the OneBot `echo` field", async () => {
     const client = new OneBotClient({ url: napcat.url });
     client.connect();
