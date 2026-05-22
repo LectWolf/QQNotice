@@ -1,11 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { createApp } from "./createApp.js";
 import type { Config } from "../config/loadConfig.js";
+import { getTestPrisma } from "../../test/db.js";
 
 function configWith(overrides: Partial<Config> = {}): Config {
   return {
-    databaseUrl: "mysql://test",
+    databaseUrl: "ignored-tests-use-injected-prisma",
     jwtSecret: "x",
     inviteCode: "x",
     adminUsername: "admin",
@@ -17,13 +18,18 @@ function configWith(overrides: Partial<Config> = {}): Config {
 
 describe("createApp", () => {
   let app: FastifyInstance;
+  const prisma = getTestPrisma();
 
   afterEach(async () => {
     if (app) await app.close();
   });
 
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
   it("responds to GET /api/ping with the Server酱 envelope", async () => {
-    app = await createApp({ config: configWith() });
+    app = await createApp({ config: configWith(), prisma });
 
     const res = await app.inject({ method: "GET", url: "/api/ping" });
 
@@ -32,7 +38,10 @@ describe("createApp", () => {
   });
 
   it("mounts /api/dev/probe in non-production environments", async () => {
-    app = await createApp({ config: configWith({ nodeEnv: "development" }) });
+    app = await createApp({
+      config: configWith({ nodeEnv: "development" }),
+      prisma,
+    });
 
     const res = await app.inject({
       method: "POST",
@@ -44,7 +53,10 @@ describe("createApp", () => {
   });
 
   it("does NOT mount /api/dev/probe in production", async () => {
-    app = await createApp({ config: configWith({ nodeEnv: "production" }) });
+    app = await createApp({
+      config: configWith({ nodeEnv: "production" }),
+      prisma,
+    });
 
     const res = await app.inject({
       method: "POST",

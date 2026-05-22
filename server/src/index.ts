@@ -2,8 +2,10 @@ import "dotenv/config";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import fastifyStatic from "@fastify/static";
+import { PrismaClient } from "@prisma/client";
 import { createApp } from "./app/createApp.js";
 import { loadConfig } from "./config/loadConfig.js";
+import { bootstrapOperator } from "./auth/bootstrapOperator.js";
 
 async function main(): Promise<void> {
   const config = loadConfig(process.env);
@@ -12,7 +14,18 @@ async function main(): Promise<void> {
   // directly — Prisma Client is the main consumer.
   process.env.DATABASE_URL = config.databaseUrl;
 
-  const app = await createApp({ config });
+  const prisma = new PrismaClient();
+  await prisma.$connect();
+
+  // Promote the configured admin user to operator if they exist already.
+  // No-op when they have not registered yet — re-runs on next start.
+  const promoted = await bootstrapOperator(prisma, config.adminUsername);
+
+  const app = await createApp({ config, prisma });
+
+  if (promoted) {
+    app.log.info(`Promoted ${config.adminUsername} to operator`);
+  }
 
   // In production, also serve the built React app from `web/dist` under the
   // root path. API routes are scoped to `/api/*` and `/send*` so there is no
@@ -42,6 +55,16 @@ async function main(): Promise<void> {
 
   await app.listen({ host: "0.0.0.0", port: config.port });
   app.log.info(`QQNotice listening on :${config.port} (${config.nodeEnv})`);
+
+  // Graceful shutdown
+  for (const sig of ["SIGINT", "SIGTERM"] as const) {
+    process.on(sig, async () => {
+      app.log.info(`Received ${sig}, shutting down`);
+      await app.close();
+      await prisma.$disconnect();
+      process.exit(0);
+    });
+  }
 }
 
 main().catch((err) => {
