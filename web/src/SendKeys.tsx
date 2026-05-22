@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type SendKey } from "./api.js";
 
 export function SendKeys(): JSX.Element {
@@ -8,6 +8,12 @@ export function SendKeys(): JSX.Element {
   const [justCreated, setJustCreated] = useState<{
     name: string;
     plaintext: string;
+  } | null>(null);
+  const [handshake, setHandshake] = useState<{
+    name: string;
+    targetQq: number;
+    hostBotQq: number;
+    expiresAt: number;
   } | null>(null);
 
   const refresh = useCallback(async () => {
@@ -29,13 +35,29 @@ export function SendKeys(): JSX.Element {
         </button>
       </header>
 
-      {showAdd && (
+      {showAdd && !handshake && (
         <AddSendKeyForm
-          onCreated={(name, plaintext) => {
+          onBound={(name, plaintext) => {
             setShowAdd(false);
             setJustCreated({ name, plaintext });
             refresh();
           }}
+          onPending={(name, targetQq, hostBotQq, expiresAt) => {
+            setShowAdd(false);
+            setHandshake({ name, targetQq, hostBotQq, expiresAt });
+          }}
+        />
+      )}
+
+      {handshake && (
+        <HandshakePanel
+          {...handshake}
+          onFinalised={(plaintext) => {
+            setJustCreated({ name: handshake.name, plaintext });
+            setHandshake(null);
+            refresh();
+          }}
+          onCancelled={() => setHandshake(null)}
         />
       )}
 
@@ -76,6 +98,78 @@ export function SendKeys(): JSX.Element {
 
       <CurlExample />
     </section>
+  );
+}
+
+function HandshakePanel({
+  name,
+  targetQq,
+  hostBotQq,
+  expiresAt,
+  onFinalised,
+  onCancelled,
+}: {
+  name: string;
+  targetQq: number;
+  hostBotQq: number;
+  expiresAt: number;
+  onFinalised: (plaintext: string) => void;
+  onCancelled: () => void;
+}): JSX.Element {
+  const [secondsLeft, setSecondsLeft] = useState(
+    Math.max(0, Math.floor((expiresAt - Date.now()) / 1000)),
+  );
+  const [error, setError] = useState<string | null>(null);
+  const cancelled = useRef(false);
+
+  useEffect(() => {
+    cancelled.current = false;
+
+    const tick = setInterval(() => {
+      setSecondsLeft(Math.max(0, Math.floor((expiresAt - Date.now()) / 1000)));
+    }, 1000);
+
+    const poll = setInterval(async () => {
+      if (cancelled.current) return;
+      const res = await api.finalizeSendKey({ targetQq });
+      if (cancelled.current) return;
+      if (res.code === 0 && res.data && "plaintext" in res.data) {
+        onFinalised(res.data.plaintext);
+      } else if (res.code === 404) {
+        setError("握手已过期或被取消,请重新创建。");
+        clearInterval(poll);
+      }
+    }, 5000);
+
+    return () => {
+      cancelled.current = true;
+      clearInterval(tick);
+      clearInterval(poll);
+    };
+  }, [targetQq, expiresAt, onFinalised]);
+
+  return (
+    <div style={handshakeBoxStyle}>
+      <h3 style={{ marginTop: 0 }}>等待添加好友:{name}</h3>
+      <p>
+        目标 QQ <strong>{targetQq}</strong> 还不是任何机器人的好友。
+        请用 QQ <strong>{targetQq}</strong> 添加机器人 QQ
+        <strong> {hostBotQq} </strong>
+        为好友。我们会自动同意你的好友请求,然后完成 SendKey 创建。
+      </p>
+      <p>
+        剩余时间: <code>{Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, "0")}</code>
+      </p>
+      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      <button
+        onClick={() => {
+          cancelled.current = true;
+          onCancelled();
+        }}
+      >
+        取消并放弃
+      </button>
+    </div>
   );
 }
 
@@ -123,9 +217,16 @@ function SendKeyRow({
 }
 
 function AddSendKeyForm({
-  onCreated,
+  onBound,
+  onPending,
 }: {
-  onCreated: (name: string, plaintext: string) => void;
+  onBound: (name: string, plaintext: string) => void;
+  onPending: (
+    name: string,
+    targetQq: number,
+    hostBotQq: number,
+    expiresAt: number,
+  ) => void;
 }): JSX.Element {
   const [name, setName] = useState("");
   const [targetQq, setTargetQq] = useState("");
@@ -136,17 +237,26 @@ function AddSendKeyForm({
     e.preventDefault();
     setError(null);
     setBusy(true);
-    const res = await api.createSendKey({
-      name,
-      targetQq: Number(targetQq),
-    });
+    const targetQqNum = Number(targetQq);
+    const res = await api.createSendKey({ name, targetQq: targetQqNum });
     setBusy(false);
-    if (res.code === 0 && res.data) {
+
+    if (res.code === 0 && res.data && "plaintext" in res.data) {
       setName("");
       setTargetQq("");
-      onCreated(res.data.name, res.data.plaintext);
-    } else if (res.code === 409) {
-      setError("没有任何机器人加了该 QQ 为好友。需要先和机器人加好友(0005 切片完成后会自动引导)。");
+      onBound(res.data.name, res.data.plaintext);
+    } else if (res.code === 202 && res.data && "hostBotQq" in res.data) {
+      const submittedName = name;
+      setName("");
+      setTargetQq("");
+      onPending(
+        submittedName,
+        targetQqNum,
+        res.data.hostBotQq,
+        res.data.expiresAt,
+      );
+    } else if (res.code === 503) {
+      setError("当前没有任何在线机器人,请联系管理员。");
     } else {
       setError(res.message);
     }
@@ -250,6 +360,13 @@ const formStyle: React.CSSProperties = {
   padding: "0.75rem",
   background: "#fafafa",
   border: "1px solid #eee",
+  borderRadius: 4,
+};
+
+const handshakeBoxStyle: React.CSSProperties = {
+  padding: "1rem",
+  background: "#fff7e6",
+  border: "1px solid #f4c97a",
   borderRadius: 4,
 };
 

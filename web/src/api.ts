@@ -38,6 +38,11 @@ export type SendKey = {
 
 export type CreatedSendKey = SendKey & { plaintext: string };
 
+export type PendingHandshake = {
+  hostBotQq: number;
+  expiresAt: number;
+};
+
 const TOKEN_KEY = "qqnotice.token";
 
 export function getToken(): string | null {
@@ -101,7 +106,13 @@ export const api = {
   // SendKeys
   listSendKeys: () => request<SendKey[]>("GET", "/api/me/keys"),
   createSendKey: (input: { name: string; targetQq: number }) =>
-    request<CreatedSendKey>("POST", "/api/me/keys", input),
+    request<CreatedSendKey | PendingHandshake>("POST", "/api/me/keys", input),
+  finalizeSendKey: (input: { targetQq: number }) =>
+    request<CreatedSendKey | PendingHandshake>(
+      "POST",
+      "/api/me/keys/finalize",
+      input,
+    ),
   deleteSendKey: (id: number) =>
     request("DELETE", `/api/me/keys/${id}`),
 };
