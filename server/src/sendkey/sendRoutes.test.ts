@@ -49,6 +49,8 @@ function makeFakeManager(opts: {
   failBotIds?: Set<number>;
 }): BotManager {
   const m = new BotManager({ prisma: opts.prisma, clientFactory: stubFactory });
+  // Mutable copy so markSendFailure can flip alive flags.
+  const aliveByBot = new Map(opts.bots.map((b) => [b.botId, b.alive]));
   (m as unknown as { listStatus: () => BotStatus[] }).listStatus = () =>
     opts.bots.map((b) => ({
       botId: b.botId,
@@ -59,7 +61,7 @@ function makeFakeManager(opts: {
       lastHeartbeatAt: Date.now(),
       heartbeatInterval: 5000,
       online: true,
-      alive: b.alive,
+      alive: aliveByBot.get(b.botId) ?? false,
       friendCount: 0,
     }));
   (m as unknown as {
@@ -70,6 +72,11 @@ function makeFakeManager(opts: {
     }
     opts.calls.push({ botId, action, params });
     return { message_id: 1 };
+  };
+  (m as unknown as {
+    markSendFailure: (botId: number) => void;
+  }).markSendFailure = (botId) => {
+    aliveByBot.set(botId, false);
   };
   return m;
 }
@@ -239,5 +246,167 @@ describe("/send (5 forms)", () => {
     });
     // header wins -> auth succeeds
     expect(res.statusCode).toBe(200);
+  });
+
+  it("rebinds the SendKey to another alive friendly bot when the bound bot is dead, persists the change, and uses the new bot for the send", async () => {
+    // Two bots: A and B, both initially alive and friends of target 12345.
+    const botB = await prisma.bot.create({
+      data: { name: "B", qq: BigInt(10002), wsUrl: "ws://y" },
+    });
+    cache.add(botB.id, 12345);
+    // botA is the existing one (10001) from beforeEach. plaintext is bound
+    // to botA via a normal create-key flow.
+
+    // Sanity: the SendKey from beforeEach is bound to bot 10001.
+    const initialKey = await prisma.sendKey.findFirstOrThrow({
+      where: { name: "ci" },
+    });
+    const botA = await prisma.bot.findUniqueOrThrow({
+      where: { id: initialKey.botId },
+    });
+
+    // Now flip botA dead while leaving botB alive. Replace the app with a
+    // freshly-built fake manager that reflects this snapshot.
+    if (app) await app.close();
+    calls = [];
+    const fakeManager = makeFakeManager({
+      prisma,
+      bots: [
+        { botId: botA.id, alive: false }, // dead
+        { botId: botB.id, alive: true },
+      ],
+      calls,
+    });
+    app = await createApp({
+      config,
+      prisma,
+      botManager: fakeManager,
+      friendshipCache: cache,
+    });
+
+    const send = await app.inject({
+      method: "POST",
+      url: "/send",
+      payload: { key: plaintext, content: "hello" },
+    });
+
+    expect(send.statusCode).toBe(200);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.botId).toBe(botB.id); // routed via the alive bot
+
+    const dbKey = await prisma.sendKey.findUnique({
+      where: { id: initialKey.id },
+    });
+    expect(dbKey!.botId).toBe(botB.id); // persisted re-bind
+  });
+
+  it("retries via another alive friendly bot when send_private_msg fails on the bound bot", async () => {
+    // botA bound, alive but the underlying send fails (user removed bot
+    // as friend). botB also alive and friend.
+    const initialKey = await prisma.sendKey.findFirstOrThrow({
+      where: { name: "ci" },
+    });
+    const botA = await prisma.bot.findUniqueOrThrow({
+      where: { id: initialKey.botId },
+    });
+    const botB = await prisma.bot.create({
+      data: { name: "B", qq: BigInt(10002), wsUrl: "ws://y" },
+    });
+    cache.add(botB.id, 12345);
+
+    if (app) await app.close();
+    calls = [];
+    const fakeManager = makeFakeManager({
+      prisma,
+      bots: [
+        { botId: botA.id, alive: true },
+        { botId: botB.id, alive: true },
+      ],
+      calls,
+      failBotIds: new Set([botA.id]),
+    });
+    app = await createApp({
+      config,
+      prisma,
+      botManager: fakeManager,
+      friendshipCache: cache,
+    });
+
+    const send = await app.inject({
+      method: "POST",
+      url: "/send",
+      payload: { key: plaintext, content: "retry me" },
+    });
+
+    expect(send.statusCode).toBe(200);
+    // botA was tried, failed, then botB succeeded — 1 successful call.
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.botId).toBe(botB.id);
+
+    // Friendship for (botA, target) was dropped from cache.
+    expect(cache.has(botA.id, 12345)).toBe(false);
+    expect(cache.has(botB.id, 12345)).toBe(true);
+
+    // SendKey is rebound to botB.
+    const dbKey = await prisma.sendKey.findUnique({
+      where: { id: initialKey.id },
+    });
+    expect(dbKey!.botId).toBe(botB.id);
+  });
+
+  it("returns 502 when the bound bot's send fails and no other alive friendly bot exists", async () => {
+    const initialKey = await prisma.sendKey.findFirstOrThrow({
+      where: { name: "ci" },
+    });
+    const botA = await prisma.bot.findUniqueOrThrow({
+      where: { id: initialKey.botId },
+    });
+
+    if (app) await app.close();
+    calls = [];
+    const fakeManager = makeFakeManager({
+      prisma,
+      bots: [{ botId: botA.id, alive: true }],
+      calls,
+      failBotIds: new Set([botA.id]),
+    });
+    app = await createApp({
+      config,
+      prisma,
+      botManager: fakeManager,
+      friendshipCache: cache,
+    });
+
+    const send = await app.inject({
+      method: "POST",
+      url: "/send",
+      payload: { key: plaintext, content: "doomed" },
+    });
+
+    expect(send.statusCode).toBe(502);
+    expect(calls).toHaveLength(0);
+    // Friendship was still dropped — the next request will skip botA up
+    // front.
+    expect(cache.has(botA.id, 12345)).toBe(false);
+  });
+
+  it("rejects sends through a SendKey whose state is disabled with 401", async () => {
+    const initialKey = await prisma.sendKey.findFirstOrThrow({
+      where: { name: "ci" },
+    });
+    await prisma.sendKey.update({
+      where: { id: initialKey.id },
+      data: { state: "disabled" },
+    });
+
+    const send = await app.inject({
+      method: "POST",
+      url: "/send",
+      payload: { key: plaintext, content: "ignored" },
+    });
+
+    expect(send.statusCode).toBe(401);
+    expect(send.json().message).toBe("send_key_disabled");
+    expect(calls).toHaveLength(0);
   });
 });

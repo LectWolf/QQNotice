@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
+import type { PrismaClient } from "@prisma/client";
 import type { BotManager } from "../bot/BotManager.js";
-import type { SendKeyService, AuthenticatedSendKey } from "./SendKeyService.js";
+import type { SendKeyService } from "./SendKeyService.js";
 import type { Router as RoutingRouter } from "../router/Router.js";
 import type { FriendshipCache } from "../friendship/FriendshipCache.js";
 
@@ -74,6 +75,7 @@ export function renderMessage(title: string | null, content: string): string {
 }
 
 export type SendRouteDeps = {
+  prisma: PrismaClient;
   botManager: BotManager;
   sendKeyService: SendKeyService;
   router: RoutingRouter;
@@ -148,20 +150,73 @@ export function registerSendRoutes(
     const targetBotId =
       decision.kind === "send" ? decision.botId : decision.newBotId;
 
+    // Persist the re-bind BEFORE attempting the send so a transient failure
+    // here doesn't leave us routing through a dead bot on the next request.
+    if (decision.kind === "rebindAndSend") {
+      await deps.prisma.sendKey.update({
+        where: { id: auth.id },
+        data: { botId: decision.newBotId },
+      });
+    }
+
     try {
       await deps.botManager.request(targetBotId, "send_private_msg", {
         user_id: auth.targetQq,
         message,
       });
     } catch (err) {
-      reply.status(502).send({
-        code: 502,
-        message: "send_failed",
-      });
-      return;
+      // Send-time failure recovery (CONTEXT.md "Bound Bot is alive but the
+      // actual send_private_msg call fails"): drop the friendship from the
+      // cache, mark the bot dead, and re-route once. Maximum one retry per
+      // inbound request.
+      deps.friendshipCache.drop(targetBotId, auth.targetQq);
+      deps.botManager.markSendFailure(targetBotId);
+
+      const retryDecision = deps.router.decideOnSend(
+        { boundBotId: targetBotId, targetQq: auth.targetQq },
+        {
+          bots: deps.botManager.listStatus().map((s) => ({
+            id: s.botId,
+            alive: s.alive,
+          })),
+          cache: deps.friendshipCache,
+        },
+      );
+
+      if (retryDecision.kind === "fail") {
+        reply
+          .status(retryDecision.httpCode)
+          .send({
+            code: retryDecision.httpCode,
+            message: retryDecision.reason,
+          });
+        return;
+      }
+
+      const retryBotId =
+        retryDecision.kind === "send"
+          ? retryDecision.botId
+          : retryDecision.newBotId;
+
+      if (retryDecision.kind === "rebindAndSend") {
+        await deps.prisma.sendKey.update({
+          where: { id: auth.id },
+          data: { botId: retryDecision.newBotId },
+        });
+      }
+
+      try {
+        await deps.botManager.request(retryBotId, "send_private_msg", {
+          user_id: auth.targetQq,
+          message,
+        });
+      } catch {
+        reply.status(502).send({ code: 502, message: "send_failed" });
+        return;
+      }
     }
 
-    // (lastUsedAt, re-bind persistence, send-failure recovery → slice 0006.)
+    // (lastUsedAt → slice 0007 admin work.)
     reply.send({ code: 0, message: "ok" });
   };
 

@@ -88,11 +88,17 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
   registerBotAdminRoutes(app, { prisma: deps.prisma, manager: botManager });
   registerSendKeyRoutes(app, sendKeyService);
   registerSendRoutes(app, {
+    prisma: deps.prisma,
     botManager,
     sendKeyService,
     router,
     friendshipCache,
   });
+
+  // Expose the service on the app so the entrypoint can call
+  // reconcileOnStartup after the bot pool has had a chance to settle.
+  (app as unknown as { sendKeyService: SendKeyService }).sendKeyService =
+    sendKeyService;
 
   if (deps.config.nodeEnv !== "production") {
     registerProbeRoute(app);
