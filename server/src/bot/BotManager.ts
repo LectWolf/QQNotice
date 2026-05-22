@@ -2,6 +2,7 @@ import type { PrismaClient } from "@prisma/client";
 import type { OneBotClient } from "../onebot/OneBotClient.js";
 import { computeBotAlive } from "./computeBotAlive.js";
 import type { FriendshipCache } from "../friendship/FriendshipCache.js";
+import type { PendingKeyCreations } from "../sendkey/PendingKeyCreations.js";
 
 export type BotStatus = {
   botId: number;
@@ -30,6 +31,13 @@ export type BotManagerDeps = {
    * to alive, and writes the result into the cache via `replaceAllForBot`.
    */
   friendshipCache?: FriendshipCache;
+  /**
+   * Optional PendingKeyCreations. When provided together with
+   * `friendshipCache`, incoming `request.friend` events are auto-approved
+   * (and the cache updated) only when `(targetQq, botId)` is in the pending
+   * registry. Without a registry, friend requests are ignored.
+   */
+  pendingKeys?: PendingKeyCreations;
   /** Injected so tests can control time; defaults to Date.now. */
   now?: () => number;
   /** How often `reconcile()` runs in the background, ms. Default 3000. */
@@ -65,6 +73,7 @@ export class BotManager {
   private readonly prisma: PrismaClient;
   private readonly clientFactory: ClientFactory;
   private readonly friendshipCache: FriendshipCache | null;
+  private readonly pendingKeys: PendingKeyCreations | null;
   private readonly now: () => number;
   private readonly reconcileIntervalMs: number;
   private bots = new Map<number, BotEntry>();
@@ -75,6 +84,7 @@ export class BotManager {
     this.prisma = deps.prisma;
     this.clientFactory = deps.clientFactory;
     this.friendshipCache = deps.friendshipCache ?? null;
+    this.pendingKeys = deps.pendingKeys ?? null;
     this.now = deps.now ?? (() => Date.now());
     this.reconcileIntervalMs = deps.reconcileIntervalMs ?? 3000;
   }
@@ -300,6 +310,23 @@ export class BotManager {
         entry.clientUrl = null;
         entry.clientToken = null;
         entry.friendsPulled = false;
+      });
+
+      client.on("friendRequest", (qq, flag) => {
+        if (!this.friendshipCache || !this.pendingKeys) return;
+        if (!this.pendingKeys.isPending(qq, entry.row.id, this.now())) return;
+        // Auto-approve, then add the (botId, qq) pair to the cache.
+        const c = entry.client;
+        if (!c) return;
+        void c
+          .request("set_friend_add_request", { flag, approve: true })
+          .then(() => {
+            this.friendshipCache!.add(entry.row.id, qq);
+          })
+          .catch(() => {
+            // Best-effort; the user can retry. Cache is not updated on
+            // failure.
+          });
       });
 
       client.connect();

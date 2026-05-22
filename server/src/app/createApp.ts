@@ -12,6 +12,7 @@ import { registerBotAdminRoutes } from "../admin/botRoutes.js";
 import { FriendshipCache } from "../friendship/FriendshipCache.js";
 import { Router as RoutingRouter } from "../router/Router.js";
 import { SendKeyService } from "../sendkey/SendKeyService.js";
+import { PendingKeyCreations } from "../sendkey/PendingKeyCreations.js";
 import { registerSendKeyRoutes } from "../sendkey/sendKeyRoutes.js";
 import { registerSendRoutes } from "../sendkey/sendRoutes.js";
 import {
@@ -60,6 +61,7 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
 
   const friendshipCache = deps.friendshipCache ?? new FriendshipCache();
   const router = new RoutingRouter();
+  const pendingKeys = new PendingKeyCreations();
 
   const botManager =
     deps.botManager ??
@@ -67,6 +69,7 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
       prisma: deps.prisma,
       clientFactory: (opts) => new OneBotClient(opts),
       friendshipCache,
+      pendingKeys,
     });
   await botManager.start();
   app.addHook("onClose", async () => {
@@ -78,6 +81,7 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
     botManager,
     friendshipCache,
     router,
+    pendingKeys,
     bcryptCost: deps.config.nodeEnv === "test" ? 4 : undefined,
   });
 

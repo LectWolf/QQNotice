@@ -220,4 +220,168 @@ describe("BotManager liveness via heartbeat", () => {
 
     await manager.stop();
   });
+
+  it("auto-approves a request.friend for a pending target and adds it to cache", async () => {
+    const bot = await prisma.bot.create({
+      data: {
+        name: "primary",
+        qq: BigInt(10001),
+        wsUrl: napcat.url,
+        enabled: true,
+      },
+    });
+
+    const { FriendshipCache } = await import(
+      "../friendship/FriendshipCache.js"
+    );
+    const { PendingKeyCreations } = await import(
+      "../sendkey/PendingKeyCreations.js"
+    );
+    const cache = new FriendshipCache();
+    const pending = new PendingKeyCreations();
+    pending.open({
+      userId: 1,
+      targetQq: 12345,
+      name: "ci",
+      aliveBotIds: [bot.id],
+      pickIndex: () => 0,
+      now: Date.now(),
+    });
+
+    manager = new BotManager({
+      prisma,
+      clientFactory: (opts) => new OneBotClient(opts),
+      friendshipCache: cache,
+      pendingKeys: pending,
+    });
+    await manager.start();
+
+    let approveCallSeen = false;
+
+    napcat.onAnyConnection((conn) => {
+      conn.socket.on("message", (raw) => {
+        const req = JSON.parse(raw.toString()) as {
+          action: string;
+          params: Record<string, unknown>;
+          echo: string;
+        };
+        if (req.action === "get_friend_list") {
+          conn.socket.send(
+            JSON.stringify({
+              status: "ok",
+              retcode: 0,
+              data: [],
+              echo: req.echo,
+            }),
+          );
+        } else if (req.action === "set_friend_add_request") {
+          approveCallSeen = true;
+          expect(req.params.flag).toBe("flag-abc");
+          expect(req.params.approve).toBe(true);
+          conn.socket.send(
+            JSON.stringify({ status: "ok", retcode: 0, echo: req.echo }),
+          );
+        }
+      });
+      napcat.send(
+        heartbeatPayload({ selfId: 10001, interval: 5000, online: true }),
+      );
+      // Send the friend request after the connection is established.
+      setTimeout(() => {
+        napcat.send({
+          time: 1700000000,
+          self_id: 10001,
+          post_type: "request",
+          request_type: "friend",
+          user_id: 12345,
+          comment: "hi",
+          flag: "flag-abc",
+        });
+      }, 50);
+    });
+
+    const deadline = Date.now() + 3000;
+    while (!cache.has(bot.id, 12345) && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+
+    expect(approveCallSeen).toBe(true);
+    expect(cache.has(bot.id, 12345)).toBe(true);
+
+    await manager.stop();
+  });
+
+  it("ignores a request.friend for a target that is NOT in the pending list", async () => {
+    const bot = await prisma.bot.create({
+      data: {
+        name: "primary",
+        qq: BigInt(10001),
+        wsUrl: napcat.url,
+        enabled: true,
+      },
+    });
+
+    const { FriendshipCache } = await import(
+      "../friendship/FriendshipCache.js"
+    );
+    const { PendingKeyCreations } = await import(
+      "../sendkey/PendingKeyCreations.js"
+    );
+    const cache = new FriendshipCache();
+    const pending = new PendingKeyCreations();
+    // No `open()` — nobody is pending.
+
+    manager = new BotManager({
+      prisma,
+      clientFactory: (opts) => new OneBotClient(opts),
+      friendshipCache: cache,
+      pendingKeys: pending,
+    });
+    await manager.start();
+
+    let approveCallSeen = false;
+
+    napcat.onAnyConnection((conn) => {
+      conn.socket.on("message", (raw) => {
+        const req = JSON.parse(raw.toString()) as {
+          action: string;
+          echo: string;
+        };
+        if (req.action === "get_friend_list") {
+          conn.socket.send(
+            JSON.stringify({
+              status: "ok",
+              retcode: 0,
+              data: [],
+              echo: req.echo,
+            }),
+          );
+        } else if (req.action === "set_friend_add_request") {
+          approveCallSeen = true;
+        }
+      });
+      napcat.send(
+        heartbeatPayload({ selfId: 10001, interval: 5000, online: true }),
+      );
+      setTimeout(() => {
+        napcat.send({
+          time: 1700000000,
+          self_id: 10001,
+          post_type: "request",
+          request_type: "friend",
+          user_id: 99999, // not pending
+          comment: "spam",
+          flag: "flag-spam",
+        });
+      }, 50);
+    });
+
+    // Give the manager a chance to (incorrectly) auto-approve.
+    await new Promise((r) => setTimeout(r, 250));
+
+    expect(approveCallSeen).toBe(false);
+    expect(cache.has(bot.id, 99999)).toBe(false);
+
+    await manager.stop();
+  });
 });
