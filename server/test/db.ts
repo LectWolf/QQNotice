@@ -25,13 +25,19 @@ export function getTestPrisma(): PrismaClient {
 /**
  * Truncates every table the auth + send-key flows touch. Cheaper than
  * `prisma migrate reset` for per-test isolation.
+ *
+ * Wrapped in a transaction so the FOREIGN_KEY_CHECKS toggle stays scoped
+ * to the same MySQL connection across all five statements (otherwise
+ * Prisma may pick a different connection from the pool between calls and
+ * the truncates fail with FK errors).
  */
 export async function resetDb(prisma: PrismaClient): Promise<void> {
-  // Order matters: child tables first.
-  await prisma.$executeRawUnsafe("SET FOREIGN_KEY_CHECKS=0");
-  await prisma.$executeRawUnsafe("TRUNCATE TABLE Friendship");
-  await prisma.$executeRawUnsafe("TRUNCATE TABLE SendKey");
-  await prisma.$executeRawUnsafe("TRUNCATE TABLE Bot");
-  await prisma.$executeRawUnsafe("TRUNCATE TABLE User");
-  await prisma.$executeRawUnsafe("SET FOREIGN_KEY_CHECKS=1");
+  await prisma.$transaction([
+    prisma.$executeRawUnsafe("SET FOREIGN_KEY_CHECKS=0"),
+    prisma.$executeRawUnsafe("TRUNCATE TABLE Friendship"),
+    prisma.$executeRawUnsafe("TRUNCATE TABLE SendKey"),
+    prisma.$executeRawUnsafe("TRUNCATE TABLE Bot"),
+    prisma.$executeRawUnsafe("TRUNCATE TABLE User"),
+    prisma.$executeRawUnsafe("SET FOREIGN_KEY_CHECKS=1"),
+  ]);
 }

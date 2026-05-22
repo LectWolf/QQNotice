@@ -29,15 +29,23 @@ const stubFactory: ClientFactory = (opts) =>
  * For SendKeyService tests we only care that listAliveBotIds returns what
  * we say it does. We override listStatus indirectly by stubbing the method.
  */
-function makeAliveManager(prisma: ReturnType<typeof getTestPrisma>, aliveBotIds: number[]): BotManager {
+async function makeAliveManager(
+  prisma: ReturnType<typeof getTestPrisma>,
+  aliveBotIds: number[],
+): Promise<BotManager> {
   const m = new BotManager({ prisma, clientFactory: stubFactory });
-  // BotManager's listStatus is the Router's source for alive bots; but
-  // SendKeyService receives a BotManager and asks for status. We simulate
-  // by stubbing the method.
+  const rows = await prisma.bot.findMany({
+    where: { id: { in: aliveBotIds } },
+  });
+  const qqByBotId = new Map(rows.map((r) => [r.id, Number(r.qq)]));
   (m as unknown as {
-    listStatus: () => Array<{ botId: number; alive: boolean }>;
+    listStatus: () => Array<{ botId: number; qq: number; alive: boolean }>;
   }).listStatus = () =>
-    aliveBotIds.map((id) => ({ botId: id, alive: true }));
+    aliveBotIds.map((id) => ({
+      botId: id,
+      qq: qqByBotId.get(id) ?? 0,
+      alive: true,
+    }));
   return m;
 }
 
@@ -65,7 +73,7 @@ describe("SendKeyService.create", () => {
     friendshipCache.add(bot.id, 999);
     const service = new SendKeyService({
       prisma,
-      botManager: makeAliveManager(prisma, [bot.id]),
+      botManager: await makeAliveManager(prisma, [bot.id]),
       friendshipCache,
       router: new Router({ pickIndex: () => 0 }),
       bcryptCost: 4,
@@ -94,11 +102,14 @@ describe("SendKeyService.create", () => {
     expect(stored!.state).toBe("active");
   });
 
-  it("throws needs_handshake (409) when no alive bot is friends with the target", async () => {
+  it("returns a needsHandshake result with the host bot QQ when no alive bot is friends with the target but at least one alive bot exists", async () => {
+    const bot = await prisma.bot.create({
+      data: { name: "host-candidate", qq: BigInt(20001), wsUrl: "ws://x" },
+    });
     const friendshipCache = new FriendshipCache();
     const service = new SendKeyService({
       prisma,
-      botManager: makeAliveManager(prisma, []),
+      botManager: await makeAliveManager(prisma, [bot.id]),
       friendshipCache,
       router: new Router(),
       bcryptCost: 4,
@@ -107,19 +118,38 @@ describe("SendKeyService.create", () => {
     await expect(
       service.create({ userId, name: "ci", targetQq: 999 }),
     ).rejects.toMatchObject({
-      httpCode: 409,
+      httpCode: 202,
       reason: "needs_handshake",
+      hostBotQq: 20001,
     });
 
-    const rows = await prisma.sendKey.findMany();
-    expect(rows).toHaveLength(0);
+    // No DB row should exist yet.
+    expect(await prisma.sendKey.findMany()).toHaveLength(0);
+  });
+
+  it("throws no_alive_bot when there are zero alive bots in the pool", async () => {
+    const friendshipCache = new FriendshipCache();
+    const service = new SendKeyService({
+      prisma,
+      botManager: await makeAliveManager(prisma, []),
+      friendshipCache,
+      router: new Router(),
+      bcryptCost: 4,
+    });
+
+    await expect(
+      service.create({ userId, name: "ci", targetQq: 999 }),
+    ).rejects.toMatchObject({
+      httpCode: 503,
+      reason: "no_alive_bot",
+    });
   });
 
   it("rejects creating a SendKey for a non-existent user with 401", async () => {
     const friendshipCache = new FriendshipCache();
     const service = new SendKeyService({
       prisma,
-      botManager: makeAliveManager(prisma, []),
+      botManager: await makeAliveManager(prisma, []),
       friendshipCache,
       router: new Router(),
       bcryptCost: 4,
@@ -162,7 +192,7 @@ describe("SendKeyService.listForUser", () => {
     friendshipCache.add(botId, 999);
     service = new SendKeyService({
       prisma,
-      botManager: makeAliveManager(prisma, [botId]),
+      botManager: await makeAliveManager(prisma, [botId]),
       friendshipCache,
       router: new Router({ pickIndex: () => 0 }),
       bcryptCost: 4,
@@ -220,7 +250,7 @@ describe("SendKeyService.delete", () => {
     friendshipCache.add(botId, 999);
     service = new SendKeyService({
       prisma,
-      botManager: makeAliveManager(prisma, [botId]),
+      botManager: await makeAliveManager(prisma, [botId]),
       friendshipCache,
       router: new Router({ pickIndex: () => 0 }),
       bcryptCost: 4,
@@ -279,7 +309,7 @@ describe("SendKeyService.authenticate", () => {
     friendshipCache.add(botId, 999);
     service = new SendKeyService({
       prisma,
-      botManager: makeAliveManager(prisma, [botId]),
+      botManager: await makeAliveManager(prisma, [botId]),
       friendshipCache,
       router: new Router({ pickIndex: () => 0 }),
       bcryptCost: 4,
@@ -305,5 +335,89 @@ describe("SendKeyService.authenticate", () => {
     expect(await service.authenticate("sk_totallybogusvaluexxxxxxx")).toBeNull();
     expect(await service.authenticate("not-even-a-key")).toBeNull();
     expect(await service.authenticate("")).toBeNull();
+  });
+});
+
+describe("SendKeyService.finalize", () => {
+  const prisma = getTestPrisma();
+  let aliceId: number;
+  let botId: number;
+  let cache: FriendshipCache;
+  let service: SendKeyService;
+
+  beforeEach(async () => {
+    await resetDb(prisma);
+    aliceId = (
+      await prisma.user.create({
+        data: { username: "alice", passwordHash: "x" },
+      })
+    ).id;
+    const bot = await prisma.bot.create({
+      data: { name: "primary", qq: BigInt(20001), wsUrl: "ws://x" },
+    });
+    botId = bot.id;
+    cache = new FriendshipCache();
+    service = new SendKeyService({
+      prisma,
+      botManager: await makeAliveManager(prisma, [botId]),
+      friendshipCache: cache,
+      router: new Router({ pickIndex: () => 0 }),
+      bcryptCost: 4,
+    });
+  });
+
+  it("404s when there is no pending entry for (user, target)", async () => {
+    await expect(service.finalize(aliceId, 999)).rejects.toMatchObject({
+      httpCode: 404,
+      reason: "no_pending_handshake",
+    });
+  });
+
+  it("throws PendingHandshakeError while waiting for the friendship to land", async () => {
+    // Open a pending entry by attempting to create — friendship cache empty.
+    await expect(
+      service.create({ userId: aliceId, name: "ci", targetQq: 999 }),
+    ).rejects.toMatchObject({ httpCode: 202 });
+
+    // Cache still doesn't know about the friendship.
+    await expect(service.finalize(aliceId, 999)).rejects.toMatchObject({
+      httpCode: 202,
+      hostBotQq: 20001,
+    });
+  });
+
+  it("persists the SendKey and returns plaintext after the friendship is added", async () => {
+    await expect(
+      service.create({ userId: aliceId, name: "ci", targetQq: 999 }),
+    ).rejects.toMatchObject({ httpCode: 202 });
+
+    // Simulate the friend-request handler: the host bot is now friends.
+    cache.add(botId, 999);
+
+    const result = await service.finalize(aliceId, 999);
+
+    expect(result.botId).toBe(botId);
+    expect(result.targetQq).toBe(999);
+    expect(result.name).toBe("ci");
+    expect(result.plaintext).toMatch(/^sk_/);
+
+    const stored = await prisma.sendKey.findUnique({
+      where: { id: result.id },
+    });
+    expect(stored).not.toBeNull();
+    expect(stored!.botId).toBe(botId);
+  });
+
+  it("a second finalize for the same target 404s after the first consumed the entry", async () => {
+    await expect(
+      service.create({ userId: aliceId, name: "ci", targetQq: 999 }),
+    ).rejects.toMatchObject({ httpCode: 202 });
+
+    cache.add(botId, 999);
+    await service.finalize(aliceId, 999);
+
+    await expect(service.finalize(aliceId, 999)).rejects.toMatchObject({
+      httpCode: 404,
+    });
   });
 });
