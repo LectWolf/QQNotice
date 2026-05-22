@@ -1,0 +1,16 @@
+.scratch/
+AGENTS.md
+CONTEXT.md
+docs/
+
+# Node
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+*.log
+
+# Editors
+.vscode/
+.idea/

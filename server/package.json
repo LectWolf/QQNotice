@@ -1,0 +1,19 @@
+{
+  "name": "@qqnotice/server",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/ws": "^8.5.13",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

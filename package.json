@@ -1,0 +1,10 @@
+{
+  "name": "qqnotice",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "pnpm -r --if-present test"
+  },
+  "packageManager": "pnpm@9.0.0"
+}
