@@ -120,6 +120,20 @@ describe("POST /api/auth/register", () => {
     });
     expect(missingInvite.statusCode).toBe(400);
   });
+
+  it("promotes the user to operator on registration when their username matches ADMIN_USERNAME", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/auth/register",
+      payload: { username: "admin", password: "hunter2hunter2", inviteCode },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data.user.isOperator).toBe(true);
+
+    const stored = await prisma.user.findUnique({ where: { username: "admin" } });
+    expect(stored!.isOperator).toBe(true);
+  });
 });
 
 describe("POST /api/auth/login", () => {

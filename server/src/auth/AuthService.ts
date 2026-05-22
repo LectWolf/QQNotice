@@ -6,6 +6,12 @@ export type AuthDeps = {
   prisma: PrismaClient;
   jwtSecret: string;
   inviteCode: string;
+  /**
+   * Username that should always have isOperator=true. New registrations
+   * matching this name are promoted in the same transaction; useful for the
+   * very first deploy where ADMIN_USERNAME registers from scratch.
+   */
+  adminUsername: string;
   /** Optional bcrypt cost override; tests use 4 for speed. */
   bcryptCost?: number;
 };
@@ -44,12 +50,14 @@ export class AuthService {
   private readonly prisma: PrismaClient;
   private readonly jwtSecret: string;
   private readonly inviteCode: string;
+  private readonly adminUsername: string;
   private readonly bcryptCost: number;
 
   constructor(deps: AuthDeps) {
     this.prisma = deps.prisma;
     this.jwtSecret = deps.jwtSecret;
     this.inviteCode = deps.inviteCode;
+    this.adminUsername = deps.adminUsername;
     this.bcryptCost = deps.bcryptCost ?? 10;
   }
 
@@ -59,6 +67,7 @@ export class AuthService {
     }
 
     const passwordHash = await hashPassword(input.password, this.bcryptCost);
+    const isOperator = input.username === this.adminUsername;
 
     let user;
     try {
@@ -66,6 +75,7 @@ export class AuthService {
         data: {
           username: input.username,
           passwordHash,
+          isOperator,
         },
       });
     } catch (err) {
