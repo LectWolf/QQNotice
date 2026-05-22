@@ -115,4 +115,39 @@ export const api = {
     ),
   deleteSendKey: (id: number) =>
     request("DELETE", `/api/me/keys/${id}`),
+
+  // Operator: users / keys / friendships
+  listUsers: () =>
+    request<
+      Array<{
+        id: number;
+        username: string;
+        isOperator: boolean;
+        sendKeyCount: number;
+        createdAt: string;
+      }>
+    >("GET", "/api/admin/users"),
+  deleteUser: (id: number) => request("DELETE", `/api/admin/users/${id}`),
+  listAllSendKeys: () =>
+    request<
+      Array<{
+        id: number;
+        userId: number;
+        username: string;
+        name: string;
+        targetQq: number;
+        botId: number;
+        state: "active" | "disabled";
+        prefix: string;
+        createdAt: string;
+        lastUsedAt: string | null;
+      }>
+    >("GET", "/api/admin/keys"),
+  updateAdminSendKey: (id: number, state: "active" | "disabled") =>
+    request("PATCH", `/api/admin/keys/${id}`, { state }),
+  refreshFriendships: () =>
+    request<{ refreshed: number; skipped: number; durationMs: number }>(
+      "POST",
+      "/api/admin/friendships/refresh",
+    ),
 };

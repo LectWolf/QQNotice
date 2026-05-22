@@ -2,8 +2,17 @@ import { useEffect, useState } from "react";
 import { api, getToken, setToken, type AuthUser } from "./api.js";
 import { BotsAdmin } from "./BotsAdmin.js";
 import { SendKeys } from "./SendKeys.js";
+import { AdminKeys, AdminUsers } from "./AdminConsole.js";
 
-type View = "loading" | "login" | "register" | "home" | "admin-bots" | "keys";
+type View =
+  | "loading"
+  | "login"
+  | "register"
+  | "home"
+  | "admin-bots"
+  | "admin-users"
+  | "admin-keys"
+  | "keys";
 
 export function App(): JSX.Element {
   const [view, setView] = useState<View>("loading");
@@ -65,6 +74,20 @@ export function App(): JSX.Element {
           </button>
           <BotsAdmin />
         </>
+      ) : view === "admin-users" ? (
+        <>
+          <button onClick={() => setView("home")} style={{ alignSelf: "flex-start" }}>
+            ← 返回
+          </button>
+          <AdminUsers />
+        </>
+      ) : view === "admin-keys" ? (
+        <>
+          <button onClick={() => setView("home")} style={{ alignSelf: "flex-start" }}>
+            ← 返回
+          </button>
+          <AdminKeys />
+        </>
       ) : view === "keys" ? (
         <>
           <button onClick={() => setView("home")} style={{ alignSelf: "flex-start" }}>
@@ -77,6 +100,8 @@ export function App(): JSX.Element {
           user={user!}
           onLogout={handleLogout}
           onOpenBotsAdmin={() => setView("admin-bots")}
+          onOpenUsersAdmin={() => setView("admin-users")}
+          onOpenKeysAdmin={() => setView("admin-keys")}
           onOpenKeys={() => setView("keys")}
         />
       )}
@@ -185,11 +210,15 @@ function Home({
   user,
   onLogout,
   onOpenBotsAdmin,
+  onOpenUsersAdmin,
+  onOpenKeysAdmin,
   onOpenKeys,
 }: {
   user: AuthUser;
   onLogout: () => void;
   onOpenBotsAdmin: () => void;
+  onOpenUsersAdmin: () => void;
+  onOpenKeysAdmin: () => void;
   onOpenKeys: () => void;
 }): JSX.Element {
   return (
@@ -204,9 +233,17 @@ function Home({
         我的 SendKey
       </button>
       {user.isOperator && (
-        <button onClick={onOpenBotsAdmin} style={{ alignSelf: "flex-start" }}>
-          管理机器人池
-        </button>
+        <>
+          <button onClick={onOpenBotsAdmin} style={{ alignSelf: "flex-start" }}>
+            管理机器人池
+          </button>
+          <button onClick={onOpenUsersAdmin} style={{ alignSelf: "flex-start" }}>
+            用户管理
+          </button>
+          <button onClick={onOpenKeysAdmin} style={{ alignSelf: "flex-start" }}>
+            所有 SendKey
+          </button>
+        </>
       )}
       <button onClick={onLogout}>退出登录</button>
     </section>
