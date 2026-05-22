@@ -11,6 +11,10 @@ dist/
 !.env.example
 *.log
 
+# Prisma
+server/.env
+server/prisma/migrations/dev.db*
+
 # Editors
 .vscode/
 .idea/

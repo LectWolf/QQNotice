@@ -1,0 +1,11 @@
+**/node_modules
+**/dist
+**/.git
+**/.scratch
+**/AGENTS.md
+**/CONTEXT.md
+**/docs
+**/.env
+**/.env.*
+!**/.env.example
+**/.vitest-cache

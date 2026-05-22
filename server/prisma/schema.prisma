@@ -1,0 +1,73 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// One registered account. Username is unique and immutable; password
+// is bcrypt-hashed. The user matching ADMIN_USERNAME on first startup
+// has isOperator forced to true.
+model User {
+  id           Int      @id @default(autoincrement())
+  username     String   @unique @db.VarChar(32)
+  passwordHash String   @db.VarChar(72)
+  isOperator   Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  sendKeys SendKey[]
+}
+
+// One OneBot-connected QQ account managed by an Operator. The Channel acts
+// as a forward WebSocket client against `wsUrl`.
+model Bot {
+  id          Int      @id @default(autoincrement())
+  name        String   @db.VarChar(64)
+  qq          BigInt   @unique
+  wsUrl       String   @db.VarChar(255)
+  accessToken String?  @db.VarChar(255)
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  friendships Friendship[]
+  sendKeys    SendKey[]
+}
+
+// (botId, qq) -> "this bot has this QQ as a confirmed friend".
+// Populated on startup, refreshed every 24h, and updated incrementally when
+// the Channel auto-approves a friend request during a pending key creation.
+model Friendship {
+  botId     Int
+  qq        BigInt
+  updatedAt DateTime @updatedAt
+
+  bot Bot @relation(fields: [botId], references: [id], onDelete: Cascade)
+
+  @@id([botId, qq])
+}
+
+// One pre-shared credential the caller includes in every Send request.
+// Plaintext is generated server-side, returned exactly once at creation,
+// and never stored: only `keyHash` (bcrypt) and `prefix` (first 8 chars,
+// for UI identification) live in the DB.
+model SendKey {
+  id         Int       @id @default(autoincrement())
+  userId     Int
+  name       String    @db.VarChar(64)
+  targetQq   BigInt
+  botId      Int
+  state      String    @default("active") @db.VarChar(16)
+  keyHash    String    @db.VarChar(72)
+  prefix     String    @db.VarChar(16)
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bot  Bot  @relation(fields: [botId], references: [id])
+
+  @@index([userId])
+  @@index([botId])
+  @@index([prefix])
+}

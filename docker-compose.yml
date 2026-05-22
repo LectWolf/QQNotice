@@ -1,0 +1,40 @@
+services:
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-cloud123}
+      MYSQL_DATABASE: ${DB_NAME:-qqnotice}
+    volumes:
+      - db-data:/var/lib/mysql
+    healthcheck:
+      test:
+        ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${DB_PASSWORD:-cloud123}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: "3306"
+      DB_NAME: ${DB_NAME:-qqnotice}
+      DB_USER: ${DB_USER:-root}
+      DB_PASSWORD: ${DB_PASSWORD:-cloud123}
+      JWT_SECRET: ${JWT_SECRET}
+      INVITE_CODE: ${INVITE_CODE}
+      ADMIN_USERNAME: ${ADMIN_USERNAME}
+      PORT: ${PORT:-3000}
+      NODE_ENV: production
+    ports:
+      - "${PORT:-3000}:3000"
+
+volumes:
+  db-data:
