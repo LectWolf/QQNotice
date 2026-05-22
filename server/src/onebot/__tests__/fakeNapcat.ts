@@ -1,4 +1,5 @@
-import { AddressInfo, type IncomingMessage } from "node:http";
+import { type AddressInfo } from "node:net";
+import type { IncomingMessage } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
 
 /**

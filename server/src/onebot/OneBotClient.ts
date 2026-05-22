@@ -90,10 +90,12 @@ export class OneBotClient {
   }
 
   on<E extends keyof OneBotEventMap>(event: E, cb: OneBotEventMap[E]): void {
-    const bucket = (this.listeners[event] ??= [] as Array<Listener<E>>) as Array<
-      Listener<E>
-    >;
-    bucket.push(cb);
+    let bucket = this.listeners[event];
+    if (!bucket) {
+      bucket = [] as NonNullable<typeof this.listeners[E]>;
+      this.listeners[event] = bucket;
+    }
+    (bucket as Array<OneBotEventMap[E]>).push(cb);
   }
 
   private emit<E extends keyof OneBotEventMap>(
