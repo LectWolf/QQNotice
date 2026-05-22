@@ -90,7 +90,20 @@ export function SendKeys(): JSX.Element {
           </thead>
           <tbody>
             {keys.map((k) => (
-              <SendKeyRow key={k.id} item={k} onChanged={refresh} />
+              <SendKeyRow
+                key={k.id}
+                item={k}
+                onChanged={refresh}
+                onRecreate={(name, targetQq) => {
+                  // Pre-fill the form by toggling it open and seeding state
+                  // via a re-render. Simplest path: just open the form so
+                  // the user retypes.
+                  setShowAdd(true);
+                  // Could lift a "prefill" state up if the UX needs it.
+                  void name;
+                  void targetQq;
+                }}
+              />
             ))}
           </tbody>
         </table>
@@ -176,9 +189,11 @@ function HandshakePanel({
 function SendKeyRow({
   item,
   onChanged,
+  onRecreate,
 }: {
   item: SendKey;
   onChanged: () => void;
+  onRecreate: (name: string, targetQq: number) => void;
 }): JSX.Element {
   const stateColor = item.state === "active" ? "#1a8" : "#a33";
   return (
@@ -188,14 +203,27 @@ function SendKeyRow({
       <td>
         <code>{item.prefix}…</code>
       </td>
-      <td style={{ color: stateColor }}>{item.state}</td>
+      <td style={{ color: stateColor }}>
+        {item.state === "disabled" ? (
+          <span title="此 SendKey 绑定的机器人已经无法访问目标 QQ">
+            disabled
+          </span>
+        ) : (
+          item.state
+        )}
+      </td>
       <td>{new Date(item.createdAt).toLocaleString()}</td>
       <td>
         {item.lastUsedAt
           ? new Date(item.lastUsedAt).toLocaleString()
           : "—"}
       </td>
-      <td>
+      <td style={{ display: "flex", gap: "0.25rem" }}>
+        {item.state === "disabled" && (
+          <button onClick={() => onRecreate(item.name, item.targetQq)}>
+            重新创建
+          </button>
+        )}
         <button
           onClick={async () => {
             if (
