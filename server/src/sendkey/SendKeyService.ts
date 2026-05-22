@@ -237,6 +237,64 @@ export class SendKeyService {
     };
   }
 
+  /**
+   * Reconcile every SendKey against the current snapshot using
+   * Router.decideOnStartup. Called once after BotManager is up and the
+   * Friendship cache has been pulled. Returns a summary so the entrypoint
+   * can log it.
+   *
+   * Behaviour per CONTEXT.md "On startup":
+   * - Bound bot alive AND friendship intact -> leave.
+   * - Bound bot dead OR friendship lost, alternative alive friendly bot -> rebind.
+   * - No alive friendly bot -> mark state=disabled.
+   */
+  async reconcileOnStartup(): Promise<{
+    leftAlone: number;
+    rebound: number;
+    disabled: number;
+  }> {
+    const aliveBots = this.botManager
+      .listStatus()
+      .filter((s) => s.alive)
+      .map((s) => ({ id: s.botId, alive: true }));
+    const snapshot = { bots: aliveBots, cache: this.friendshipCache };
+
+    const keys = await this.prisma.sendKey.findMany({
+      where: { state: "active" },
+    });
+
+    let leftAlone = 0;
+    let rebound = 0;
+    let disabled = 0;
+
+    for (const key of keys) {
+      const decision = this.router.decideOnStartup(
+        { boundBotId: key.botId, targetQq: Number(key.targetQq) },
+        snapshot,
+      );
+      if (decision.kind === "leave") {
+        leftAlone++;
+        continue;
+      }
+      if (decision.kind === "rebind") {
+        await this.prisma.sendKey.update({
+          where: { id: key.id },
+          data: { botId: decision.newBotId },
+        });
+        rebound++;
+        continue;
+      }
+      // disable
+      await this.prisma.sendKey.update({
+        where: { id: key.id },
+        data: { state: "disabled" },
+      });
+      disabled++;
+    }
+
+    return { leftAlone, rebound, disabled };
+  }
+
   async listForUser(userId: number): Promise<SendKeyListItem[]> {
     const rows = await this.prisma.sendKey.findMany({
       where: { userId },

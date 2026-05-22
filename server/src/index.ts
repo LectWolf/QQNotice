@@ -27,6 +27,27 @@ async function main(): Promise<void> {
     app.log.info(`Promoted ${config.adminUsername} to operator`);
   }
 
+  // Reconcile every SendKey against the current snapshot. Bots may not yet
+  // have pulled their friend lists at this point — give them a brief grace
+  // window so reconcile sees a populated cache. This is best-effort: if the
+  // grace window is too short, an early send will trigger the same routing
+  // logic dynamically, and the next reconcile (e.g. on next restart) catches
+  // up.
+  setTimeout(() => {
+    const service = (app as unknown as {
+      sendKeyService?: import("./sendkey/SendKeyService.js").SendKeyService;
+    }).sendKeyService;
+    if (!service) return;
+    void service
+      .reconcileOnStartup()
+      .then((summary) => {
+        app.log.info(summary, "startup reconcile complete");
+      })
+      .catch((err) => {
+        app.log.error({ err }, "startup reconcile failed");
+      });
+  }, 5000);
+
   // In production, also serve the built React app from `web/dist` under the
   // root path. API routes are scoped to `/api/*` and `/send*` so there is no
   // overlap.

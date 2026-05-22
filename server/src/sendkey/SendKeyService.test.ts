@@ -421,3 +421,154 @@ describe("SendKeyService.finalize", () => {
     });
   });
 });
+
+describe("SendKeyService.reconcileOnStartup", () => {
+  const prisma = getTestPrisma();
+  let aliceId: number;
+
+  beforeEach(async () => {
+    await resetDb(prisma);
+    aliceId = (
+      await prisma.user.create({
+        data: { username: "alice", passwordHash: "x" },
+      })
+    ).id;
+  });
+
+  it("leaves keys whose bound bot is alive and still friends", async () => {
+    const bot = await prisma.bot.create({
+      data: { name: "A", qq: BigInt(10001), wsUrl: "ws://x" },
+    });
+    const key = await prisma.sendKey.create({
+      data: {
+        userId: aliceId,
+        name: "ci",
+        targetQq: BigInt(999),
+        botId: bot.id,
+        keyHash: "h",
+        prefix: "p",
+      },
+    });
+    const cache = new FriendshipCache();
+    cache.add(bot.id, 999);
+
+    const service = new SendKeyService({
+      prisma,
+      botManager: await makeAliveManager(prisma, [bot.id]),
+      friendshipCache: cache,
+      router: new Router(),
+      bcryptCost: 4,
+    });
+
+    const summary = await service.reconcileOnStartup();
+    expect(summary).toEqual({ leftAlone: 1, rebound: 0, disabled: 0 });
+
+    const after = await prisma.sendKey.findUniqueOrThrow({
+      where: { id: key.id },
+    });
+    expect(after.botId).toBe(bot.id);
+    expect(after.state).toBe("active");
+  });
+
+  it("rebinds to another alive friendly bot when the bound bot is dead", async () => {
+    const dead = await prisma.bot.create({
+      data: { name: "dead", qq: BigInt(10001), wsUrl: "ws://x" },
+    });
+    const alive = await prisma.bot.create({
+      data: { name: "alive", qq: BigInt(10002), wsUrl: "ws://y" },
+    });
+    const key = await prisma.sendKey.create({
+      data: {
+        userId: aliceId,
+        name: "ci",
+        targetQq: BigInt(999),
+        botId: dead.id,
+        keyHash: "h",
+        prefix: "p",
+      },
+    });
+    const cache = new FriendshipCache();
+    cache.add(alive.id, 999);
+
+    const service = new SendKeyService({
+      prisma,
+      botManager: await makeAliveManager(prisma, [alive.id]), // dead not in alive list
+      friendshipCache: cache,
+      router: new Router({ pickIndex: () => 0 }),
+      bcryptCost: 4,
+    });
+
+    const summary = await service.reconcileOnStartup();
+    expect(summary).toEqual({ leftAlone: 0, rebound: 1, disabled: 0 });
+
+    const after = await prisma.sendKey.findUniqueOrThrow({
+      where: { id: key.id },
+    });
+    expect(after.botId).toBe(alive.id);
+    expect(after.state).toBe("active");
+  });
+
+  it("disables a key when no alive bot is friends with the target", async () => {
+    const dead = await prisma.bot.create({
+      data: { name: "dead", qq: BigInt(10001), wsUrl: "ws://x" },
+    });
+    const alive = await prisma.bot.create({
+      data: { name: "alive", qq: BigInt(10002), wsUrl: "ws://y" },
+    });
+    const key = await prisma.sendKey.create({
+      data: {
+        userId: aliceId,
+        name: "ci",
+        targetQq: BigInt(999),
+        botId: dead.id,
+        keyHash: "h",
+        prefix: "p",
+      },
+    });
+    const cache = new FriendshipCache(); // empty — alive bot not friends with 999
+
+    const service = new SendKeyService({
+      prisma,
+      botManager: await makeAliveManager(prisma, [alive.id]),
+      friendshipCache: cache,
+      router: new Router(),
+      bcryptCost: 4,
+    });
+
+    const summary = await service.reconcileOnStartup();
+    expect(summary).toEqual({ leftAlone: 0, rebound: 0, disabled: 1 });
+
+    const after = await prisma.sendKey.findUniqueOrThrow({
+      where: { id: key.id },
+    });
+    expect(after.state).toBe("disabled");
+  });
+
+  it("skips already-disabled keys", async () => {
+    const bot = await prisma.bot.create({
+      data: { name: "A", qq: BigInt(10001), wsUrl: "ws://x" },
+    });
+    await prisma.sendKey.create({
+      data: {
+        userId: aliceId,
+        name: "old",
+        targetQq: BigInt(999),
+        botId: bot.id,
+        keyHash: "h",
+        prefix: "p",
+        state: "disabled",
+      },
+    });
+    const cache = new FriendshipCache();
+    const service = new SendKeyService({
+      prisma,
+      botManager: await makeAliveManager(prisma, [bot.id]),
+      friendshipCache: cache,
+      router: new Router(),
+      bcryptCost: 4,
+    });
+
+    const summary = await service.reconcileOnStartup();
+    expect(summary).toEqual({ leftAlone: 0, rebound: 0, disabled: 0 });
+  });
+});
