@@ -9,6 +9,8 @@ import { AuthService } from "../auth/AuthService.js";
 import { BotManager } from "../bot/BotManager.js";
 import { OneBotClient } from "../onebot/OneBotClient.js";
 import { registerBotAdminRoutes } from "../admin/botRoutes.js";
+import { registerUserAdminRoutes } from "../admin/userAdminRoutes.js";
+import { registerKeyAdminRoutes } from "../admin/keyAdminRoutes.js";
 import { FriendshipCache } from "../friendship/FriendshipCache.js";
 import { Router as RoutingRouter } from "../router/Router.js";
 import { SendKeyService } from "../sendkey/SendKeyService.js";
@@ -86,6 +88,11 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
   });
 
   registerBotAdminRoutes(app, { prisma: deps.prisma, manager: botManager });
+  registerUserAdminRoutes(app, {
+    prisma: deps.prisma,
+    adminUsername: deps.config.adminUsername,
+  });
+  registerKeyAdminRoutes(app, { prisma: deps.prisma, manager: botManager });
   registerSendKeyRoutes(app, sendKeyService);
   registerSendRoutes(app, {
     prisma: deps.prisma,
