@@ -93,7 +93,7 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
     adminUsername: deps.config.adminUsername,
   });
   registerKeyAdminRoutes(app, { prisma: deps.prisma, manager: botManager });
-  registerSendKeyRoutes(app, sendKeyService);
+  registerSendKeyRoutes(app, sendKeyService, deps.prisma);
   registerSendRoutes(app, {
     prisma: deps.prisma,
     botManager,

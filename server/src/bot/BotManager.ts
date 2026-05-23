@@ -166,12 +166,13 @@ export class BotManager {
     botId: number,
     action: string,
     params?: unknown,
+    timeoutMs?: number,
   ): Promise<T> {
     const entry = this.bots.get(botId);
     if (!entry || !entry.client) {
       throw new Error(`bot ${botId} not connected`);
     }
-    return entry.client.request<T>(action, params);
+    return entry.client.request<T>(action, params, timeoutMs);
   }
 
   /**

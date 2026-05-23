@@ -18,6 +18,7 @@ model User {
   createdAt    DateTime @default(now())
 
   sendKeys SendKey[]
+  sendLogs SendLog[]
 }
 
 // One OneBot-connected QQ account managed by an Operator. The Channel acts
@@ -69,8 +70,56 @@ model SendKey {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   bot  Bot  @relation(fields: [botId], references: [id])
+  logs SendLog[]
 
   @@index([userId])
   @@index([botId])
   @@index([prefix])
+}
+
+// One row per attempted /send call, success or failure. Lets the owner
+// (and operators) see exactly what was pushed, when, by which bot, with
+// what outcome. Cascades on user deletion and on the parent SendKey
+// being deleted so logs never outlive their context.
+//
+// `content` is stored as-is up to 4000 chars (matches the send-time cap);
+// `title` follows the API's 100-char cap. `statusCode` mirrors the HTTP
+// reply (0/200 success synonym, 401/502/503 failure modes). `reason`
+// holds the machine code (`send_failed`, `send_key_disabled`, etc.) when
+// non-success; null on success.
+model SendLog {
+  id            Int      @id @default(autoincrement())
+  sendKeyId     Int
+  userId        Int
+  botId         Int?
+  targetQq      BigInt
+  title         String?  @db.VarChar(100)
+  content       String   @db.VarChar(4000)
+  statusCode    Int
+  reason        String?  @db.VarChar(64)
+  durationMs    Int
+  hasAttachment Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  sendKey    SendKey      @relation(fields: [sendKeyId], references: [id], onDelete: Cascade)
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  attachment SendLogFile?
+
+  @@index([sendKeyId, createdAt])
+  @@index([userId, createdAt])
+  @@index([createdAt])
+}
+
+// File payload for file-mode sends, kept in a sibling table so the main
+// SendLog row stays light for paginated audit listing. `data` is the raw
+// upload bytes; we hand them back unchanged on download. Cascades on the
+// parent SendLog being removed (which itself cascades on key/user delete).
+model SendLogFile {
+  sendLogId Int     @id
+  fileName  String  @db.VarChar(255)
+  mimeType  String? @db.VarChar(127)
+  byteCount Int
+  data      Bytes   @db.LongBlob
+
+  sendLog SendLog @relation(fields: [sendLogId], references: [id], onDelete: Cascade)
 }

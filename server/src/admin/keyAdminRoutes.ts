@@ -118,4 +118,105 @@ export function registerKeyAdminRoutes(
       throw err;
     }
   });
+
+  // Cross-user audit log of every /send call. Operator-only.
+  app.get<{ Querystring: { limit?: string } }>(
+    "/api/admin/logs",
+    {
+      schema: {
+        querystring: {
+          type: "object",
+          properties: {
+            limit: { type: "string", pattern: "^[0-9]+$" },
+          },
+        },
+      },
+    },
+    async (req, reply) => {
+      try {
+        requireOperator(req);
+        const limit = Math.min(
+          1000,
+          Math.max(1, Number(req.query.limit ?? 200)),
+        );
+        const rows = await deps.prisma.sendLog.findMany({
+          orderBy: { createdAt: "desc" },
+          take: limit,
+          include: {
+            user: { select: { username: true } },
+            sendKey: { select: { name: true } },
+          },
+        });
+        return reply.send({
+          code: 0,
+          message: "ok",
+          data: rows.map((r) => ({
+            id: r.id,
+            sendKeyId: r.sendKeyId,
+            keyName: r.sendKey.name,
+            userId: r.userId,
+            username: r.user.username,
+            botId: r.botId,
+            targetQq: Number(r.targetQq),
+            title: r.title,
+            content: r.content,
+            statusCode: r.statusCode,
+            reason: r.reason,
+            durationMs: r.durationMs,
+            hasAttachment: r.hasAttachment,
+            createdAt: r.createdAt.toISOString(),
+          })),
+        });
+      } catch (err) {
+        if (handleErr(reply, err)) return;
+        throw err;
+      }
+    },
+  );
+
+  // Operator download of any user's attachment. Same blob the owner sees,
+  // surfaced cross-user for audit.
+  app.get<{ Params: { id: string } }>(
+    "/api/admin/logs/:id/file",
+    {
+      schema: {
+        params: {
+          type: "object",
+          required: ["id"],
+          properties: { id: { type: "string", pattern: "^[0-9]+$" } },
+        },
+      },
+    },
+    async (req, reply) => {
+      try {
+        requireOperator(req);
+        const log = await deps.prisma.sendLog.findUnique({
+          where: { id: Number(req.params.id) },
+          include: { attachment: true },
+        });
+        if (!log || !log.attachment) {
+          return reply
+            .status(404)
+            .send({ code: 404, message: "attachment_not_found" });
+        }
+        const att = log.attachment;
+        const safeAscii = att.fileName.replace(/[^\x20-\x7e]/g, "_");
+        const encoded = encodeURIComponent(att.fileName);
+        return reply
+          .header(
+            "Content-Type",
+            att.mimeType || "application/octet-stream",
+          )
+          .header("Content-Length", String(att.byteCount))
+          .header(
+            "Content-Disposition",
+            `attachment; filename="${safeAscii}"; filename*=UTF-8''${encoded}`,
+          )
+          .send(att.data);
+      } catch (err) {
+        if (handleErr(reply, err)) return;
+        throw err;
+      }
+    },
+  );
 }

@@ -35,6 +35,8 @@ export async function resetDb(prisma: PrismaClient): Promise<void> {
   await prisma.$transaction([
     prisma.$executeRawUnsafe("SET FOREIGN_KEY_CHECKS=0"),
     prisma.$executeRawUnsafe("TRUNCATE TABLE Friendship"),
+    prisma.$executeRawUnsafe("TRUNCATE TABLE SendLogFile"),
+    prisma.$executeRawUnsafe("TRUNCATE TABLE SendLog"),
     prisma.$executeRawUnsafe("TRUNCATE TABLE SendKey"),
     prisma.$executeRawUnsafe("TRUNCATE TABLE Bot"),
     prisma.$executeRawUnsafe("TRUNCATE TABLE User"),

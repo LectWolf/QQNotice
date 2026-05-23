@@ -16,6 +16,7 @@
     "prisma:studio": "node scripts/with-db-url.mjs prisma studio"
   },
   "dependencies": {
+    "@fastify/multipart": "^8.3.0",
     "@fastify/static": "^7.0.4",
     "@prisma/client": "^5.22.0",
     "bcryptjs": "^2.4.3",
