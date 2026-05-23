@@ -31,12 +31,24 @@ export type SendKey = {
   targetQq: number;
   botId: number;
   prefix: string;
+  /**
+   * Full plaintext key, when known. New keys (created after plaintext
+   * storage was introduced) always have a value here. Legacy rows expose
+   * `null` and the UI falls back to a prefix-only chip with a hint.
+   */
+  plaintext: string | null;
   state: "active" | "disabled";
   createdAt: string;
   lastUsedAt: string | null;
 };
 
 export type CreatedSendKey = SendKey & { plaintext: string };
+
+export type PublicBot = {
+  qq: number;
+  name: string;
+  alive: boolean;
+};
 
 export type PendingHandshake = {
   hostBotQq: number;
@@ -104,6 +116,7 @@ export const api = {
     request("DELETE", `/api/admin/bots/${id}`),
 
   // SendKeys
+  listPublicBots: () => request<PublicBot[]>("GET", "/api/bots"),
   listSendKeys: () => request<SendKey[]>("GET", "/api/me/keys"),
   createSendKey: (input: { name: string; targetQq: number }) =>
     request<CreatedSendKey | PendingHandshake>("POST", "/api/me/keys", input),
@@ -115,6 +128,8 @@ export const api = {
     ),
   deleteSendKey: (id: number) =>
     request("DELETE", `/api/me/keys/${id}`),
+  testSendKey: (id: number) =>
+    request("POST", `/api/me/keys/${id}/test`, {}),
 
   // Operator: users / keys / friendships
   listUsers: () =>
@@ -139,6 +154,7 @@ export const api = {
         botId: number;
         state: "active" | "disabled";
         prefix: string;
+        plaintext: string | null;
         createdAt: string;
         lastUsedAt: string | null;
       }>

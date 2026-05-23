@@ -1,0 +1,125 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #root {
+    @apply h-full;
+  }
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased;
+    background-image:
+      radial-gradient(ellipse 80% 60% at 50% -20%, rgba(34, 211, 238, 0.18), transparent 60%),
+      radial-gradient(ellipse 60% 40% at 100% 100%, rgba(45, 212, 191, 0.12), transparent 60%),
+      linear-gradient(to bottom, #f8fafc, #eef2f7);
+    background-attachment: fixed;
+  }
+  ::selection {
+    @apply bg-brand-100 text-brand-900;
+  }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@layer components {
+  /* Buttons -------------------------------------------------------------- */
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium
+           transition-all duration-150 select-none
+           focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2
+           focus-visible:ring-brand-500 disabled:opacity-50 disabled:cursor-not-allowed
+           disabled:active:scale-100 active:scale-[0.98];
+  }
+  .btn-primary {
+    @apply btn text-white
+           bg-gradient-to-br from-brand-500 to-accent-500
+           hover:from-brand-400 hover:to-accent-400
+           shadow-sm hover:shadow-md shadow-brand-500/25;
+  }
+  .btn-secondary {
+    @apply btn bg-white text-slate-700 ring-1 ring-slate-200
+           hover:bg-slate-50 hover:ring-slate-300 shadow-sm;
+  }
+  .btn-danger {
+    @apply btn text-white bg-gradient-to-b from-rose-500 to-rose-600
+           hover:from-rose-400 hover:to-rose-500 shadow-sm shadow-rose-500/25;
+  }
+  .btn-ghost {
+    @apply btn text-slate-600 hover:bg-slate-100 hover:text-slate-900;
+  }
+  .btn-sm {
+    @apply px-2.5 py-1 text-xs rounded-md;
+  }
+
+  /* Cards ---------------------------------------------------------------- */
+  .card {
+    @apply bg-white/90 backdrop-blur-sm border border-slate-200/70 rounded-2xl
+           shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(15,23,42,0.08)];
+  }
+  .card-body {
+    @apply p-6;
+  }
+
+  /* Forms ---------------------------------------------------------------- */
+  .label {
+    @apply block text-sm font-medium text-slate-700 mb-1.5;
+  }
+  .input {
+    @apply block w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900
+           placeholder:text-slate-400 shadow-sm
+           transition-shadow
+           focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500;
+  }
+  .help {
+    @apply mt-1.5 text-xs text-slate-500;
+  }
+
+  /* Badges --------------------------------------------------------------- */
+  .badge {
+    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium;
+  }
+  .badge-brand {
+    @apply badge bg-brand-100 text-brand-800 ring-1 ring-inset ring-brand-200;
+  }
+  .badge-success {
+    @apply badge bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200;
+  }
+  .badge-danger {
+    @apply badge bg-rose-50 text-rose-700 ring-1 ring-inset ring-rose-200;
+  }
+  .badge-muted {
+    @apply badge bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-200;
+  }
+  .badge-warn {
+    @apply badge bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-200;
+  }
+
+  /* Tables --------------------------------------------------------------- */
+  .table-wrap {
+    @apply card overflow-hidden;
+  }
+  .table {
+    @apply w-full text-sm;
+  }
+  .table thead {
+    @apply bg-slate-50/60 text-slate-500 text-xs font-medium tracking-wider uppercase;
+  }
+  .table th {
+    @apply px-4 py-3 text-left font-medium;
+  }
+  .table td {
+    @apply px-4 py-3.5 text-slate-700;
+  }
+  .table tbody tr {
+    @apply border-t border-slate-100 transition-colors hover:bg-slate-50/60;
+  }
+
+  /* Code chip ------------------------------------------------------------ */
+  .code-chip {
+    @apply inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5
+           font-mono text-[0.78rem] text-slate-700;
+  }
+}

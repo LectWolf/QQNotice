@@ -3,34 +3,33 @@ import { api, getToken, setToken, type AuthUser } from "./api.js";
 import { BotsAdmin } from "./BotsAdmin.js";
 import { SendKeys } from "./SendKeys.js";
 import { AdminKeys, AdminUsers } from "./AdminConsole.js";
+import { ErrorAlert, InfoAlert } from "./ui.js";
+import { translateError } from "./errors.js";
+import { navigate, useRoute } from "./router.js";
 
-type View =
-  | "loading"
-  | "login"
-  | "register"
-  | "home"
-  | "admin-bots"
-  | "admin-users"
-  | "admin-keys"
-  | "keys";
+type AuthView = "login" | "register";
 
 export function App(): JSX.Element {
-  const [view, setView] = useState<View>("loading");
+  const [bootState, setBootState] = useState<"loading" | "anon" | "auth">(
+    "loading",
+  );
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [authView, setAuthView] = useState<AuthView>("login");
+  const route = useRoute();
 
   useEffect(() => {
     const token = getToken();
     if (!token) {
-      setView("login");
+      setBootState("anon");
       return;
     }
     api.me().then((res) => {
       if (res.code === 0 && res.data) {
         setUser(res.data);
-        setView("home");
+        setBootState("auth");
       } else {
         setToken(null);
-        setView("login");
+        setBootState("anon");
       }
     });
   }, []);
@@ -38,74 +37,202 @@ export function App(): JSX.Element {
   function handleAuthSuccess(u: AuthUser, token: string): void {
     setToken(token);
     setUser(u);
-    setView("home");
+    setBootState("auth");
+    navigate("/");
   }
 
   function handleLogout(): void {
     setToken(null);
     setUser(null);
-    setView("login");
+    setBootState("anon");
+    navigate("/");
   }
 
+  if (bootState === "loading") {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-sm text-slate-500">
+        <span className="animate-pulse">加载中…</span>
+      </div>
+    );
+  }
+
+  if (bootState === "anon") {
+    return (
+      <AuthHero>
+        {authView === "login" ? (
+          <LoginForm
+            onSuccess={handleAuthSuccess}
+            onSwitchToRegister={() => setAuthView("register")}
+          />
+        ) : (
+          <RegisterForm
+            onSuccess={handleAuthSuccess}
+            onSwitchToLogin={() => setAuthView("login")}
+          />
+        )}
+      </AuthHero>
+    );
+  }
+
+  // Authenticated — render based on hash route.
   return (
-    <main style={pageStyle}>
-      <header style={headerStyle}>
-        <h1 style={{ margin: 0 }}>QQNotice</h1>
-        <p style={{ margin: "0.25rem 0 0", color: "#666" }}>
-          Server酱 风格的 QQ 通知服务
-        </p>
+    <div className="min-h-screen flex flex-col">
+      <header className="sticky top-0 z-30 bg-white/70 backdrop-blur-md border-b border-slate-200/70">
+        <div className="mx-auto max-w-6xl px-6 py-3 flex items-center justify-between">
+          <button
+            onClick={() => navigate("/")}
+            className="flex items-center gap-2.5 group"
+          >
+            <Logo />
+            <span className="text-base font-semibold tracking-tight group-hover:text-brand-600">
+              QQNotice
+            </span>
+          </button>
+          {user && (
+            <div className="flex items-center gap-3 text-sm">
+              <span className="hidden sm:inline text-slate-600">
+                {user.username}
+              </span>
+              {user.isOperator && <span className="badge-brand">管理员</span>}
+              <button onClick={handleLogout} className="btn-secondary btn-sm">
+                退出
+              </button>
+            </div>
+          )}
+        </div>
       </header>
-      {view === "loading" ? (
-        <p>加载中…</p>
-      ) : view === "login" ? (
-        <LoginForm
-          onSuccess={handleAuthSuccess}
-          onSwitchToRegister={() => setView("register")}
-        />
-      ) : view === "register" ? (
-        <RegisterForm
-          onSuccess={handleAuthSuccess}
-          onSwitchToLogin={() => setView("login")}
-        />
-      ) : view === "admin-bots" ? (
-        <>
-          <button onClick={() => setView("home")} style={{ alignSelf: "flex-start" }}>
-            ← 返回
-          </button>
-          <BotsAdmin />
-        </>
-      ) : view === "admin-users" ? (
-        <>
-          <button onClick={() => setView("home")} style={{ alignSelf: "flex-start" }}>
-            ← 返回
-          </button>
-          <AdminUsers />
-        </>
-      ) : view === "admin-keys" ? (
-        <>
-          <button onClick={() => setView("home")} style={{ alignSelf: "flex-start" }}>
-            ← 返回
-          </button>
-          <AdminKeys />
-        </>
-      ) : view === "keys" ? (
-        <>
-          <button onClick={() => setView("home")} style={{ alignSelf: "flex-start" }}>
-            ← 返回
-          </button>
-          <SendKeys />
-        </>
-      ) : (
-        <Home
-          user={user!}
-          onLogout={handleLogout}
-          onOpenBotsAdmin={() => setView("admin-bots")}
-          onOpenUsersAdmin={() => setView("admin-users")}
-          onOpenKeysAdmin={() => setView("admin-keys")}
-          onOpenKeys={() => setView("keys")}
-        />
-      )}
-    </main>
+
+      <main className="flex-1 w-full">
+        <Container>
+          <Routes route={route} user={user} />
+        </Container>
+      </main>
+
+      <footer className="text-center text-xs text-slate-400 py-6">
+        Server酱 风格的 QQ 通知服务 · QQNotice
+      </footer>
+    </div>
+  );
+}
+
+function Routes({
+  route,
+  user,
+}: {
+  route: string;
+  user: AuthUser | null;
+}): JSX.Element {
+  if (!user) return <></>;
+
+  if (route === "/keys")
+    return (
+      <SubPage onBack={() => navigate("/")}>
+        <SendKeys />
+      </SubPage>
+    );
+  if (route === "/admin/bots" && user.isOperator)
+    return (
+      <SubPage onBack={() => navigate("/")}>
+        <BotsAdmin />
+      </SubPage>
+    );
+  if (route === "/admin/users" && user.isOperator)
+    return (
+      <SubPage onBack={() => navigate("/")}>
+        <AdminUsers />
+      </SubPage>
+    );
+  if (route === "/admin/keys" && user.isOperator)
+    return (
+      <SubPage onBack={() => navigate("/")}>
+        <AdminKeys />
+      </SubPage>
+    );
+
+  // Unknown route or admin route as non-operator → home.
+  return <Home user={user} />;
+}
+
+function Container({ children }: { children: React.ReactNode }): JSX.Element {
+  return <div className="mx-auto w-full max-w-6xl px-6 py-8">{children}</div>;
+}
+
+function Logo(): JSX.Element {
+  return (
+    <span className="relative inline-flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-brand-400 via-brand-500 to-accent-500 text-white font-bold shadow-md shadow-brand-500/30">
+      Q
+    </span>
+  );
+}
+
+function AuthHero({ children }: { children: React.ReactNode }): JSX.Element {
+  return (
+    <div className="min-h-screen grid lg:grid-cols-2">
+      <aside className="hidden lg:flex flex-col justify-between p-12 bg-gradient-to-br from-brand-600 via-brand-500 to-accent-600 text-white relative overflow-hidden">
+        <div className="absolute inset-0 opacity-30 mix-blend-overlay pointer-events-none">
+          <div className="absolute -top-20 -left-20 w-96 h-96 rounded-full bg-white blur-3xl opacity-20" />
+          <div className="absolute bottom-0 right-0 w-[28rem] h-[28rem] rounded-full bg-cyan-200 blur-3xl opacity-20" />
+        </div>
+        <div className="relative">
+          <div className="flex items-center gap-2.5">
+            <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-white/15 backdrop-blur text-white font-bold ring-1 ring-white/20">
+              Q
+            </span>
+            <span className="text-lg font-semibold tracking-tight">QQNotice</span>
+          </div>
+        </div>
+        <div className="relative max-w-md">
+          <h1 className="text-3xl font-bold leading-tight">
+            一行 curl,把消息推到 QQ。
+          </h1>
+          <p className="mt-4 text-white/80 text-sm leading-relaxed">
+            Server酱 风格的轻量通知服务。注册账号 → 创建 SendKey → 在脚本里调用 HTTP 接口,机器人就会私聊提醒你。
+          </p>
+          <ul className="mt-6 space-y-2 text-sm text-white/80">
+            <li className="flex items-center gap-2">
+              <span className="text-white">✓</span> 多机器人池自动路由,挂一个备一个
+            </li>
+            <li className="flex items-center gap-2">
+              <span className="text-white">✓</span> 加好友自动同意,创建即可用
+            </li>
+            <li className="flex items-center gap-2">
+              <span className="text-white">✓</span> 5 种调用形态,GET/POST 都支持
+            </li>
+          </ul>
+        </div>
+        <div className="relative text-xs text-white/60">
+          基于 OneBot · NapCat · Fastify · React
+        </div>
+      </aside>
+      <section className="flex items-center justify-center p-6 sm:p-12">
+        <div className="w-full max-w-md">
+          <div className="lg:hidden mb-8 flex items-center justify-center gap-2.5">
+            <Logo />
+            <span className="text-lg font-semibold tracking-tight">QQNotice</span>
+          </div>
+          <div className="card">
+            <div className="card-body">{children}</div>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function SubPage({
+  onBack,
+  children,
+}: {
+  onBack: () => void;
+  children: React.ReactNode;
+}): JSX.Element {
+  return (
+    <div className="space-y-5">
+      <button onClick={onBack} className="btn-ghost btn-sm -ml-2.5">
+        ← 返回主页
+      </button>
+      {children}
+    </div>
   );
 }
 
@@ -128,27 +255,50 @@ function LoginForm({
     const res = await api.login({ username, password });
     setBusy(false);
     if (res.code === 0 && res.data) onSuccess(res.data.user, res.data.token);
-    else setError(res.message);
+    else setError(translateError(res.message, res.code));
   }
 
   return (
-    <form onSubmit={submit} style={formStyle}>
-      <h2>登录</h2>
-      <Field label="用户名">
-        <input value={username} onChange={(e) => setUsername(e.target.value)} required />
-      </Field>
-      <Field label="密码">
-        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
-      </Field>
-      <button type="submit" disabled={busy}>
+    <form onSubmit={submit} className="space-y-5">
+      <div>
+        <h2 className="text-2xl font-bold tracking-tight">欢迎回来</h2>
+        <p className="mt-1.5 text-sm text-slate-500">
+          登录后即可管理你的 SendKey。
+        </p>
+      </div>
+      <div>
+        <label className="label">用户名</label>
+        <input
+          className="input"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          required
+          autoFocus
+        />
+      </div>
+      <div>
+        <label className="label">密码</label>
+        <input
+          className="input"
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          required
+        />
+      </div>
+      {error && <ErrorAlert>{error}</ErrorAlert>}
+      <button type="submit" className="btn-primary w-full" disabled={busy}>
         {busy ? "登录中…" : "登录"}
       </button>
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
-      <p>
+      <p className="text-sm text-slate-500 text-center">
         还没有账号?{" "}
-        <a href="#" onClick={(e) => (e.preventDefault(), onSwitchToRegister())}>
-          注册
-        </a>
+        <button
+          type="button"
+          onClick={onSwitchToRegister}
+          className="font-medium text-brand-600 hover:text-brand-700 hover:underline underline-offset-2"
+        >
+          立即注册
+        </button>
       </p>
     </form>
   );
@@ -174,117 +324,161 @@ function RegisterForm({
     const res = await api.register({ username, password, inviteCode });
     setBusy(false);
     if (res.code === 0 && res.data) onSuccess(res.data.user, res.data.token);
-    else setError(res.message);
+    else setError(translateError(res.message, res.code));
   }
 
   return (
-    <form onSubmit={submit} style={formStyle}>
-      <h2>注册</h2>
-      <Field label="用户名(3–32 位字母数字下划线连字符)">
-        <input value={username} onChange={(e) => setUsername(e.target.value)} required minLength={3} maxLength={32} />
-      </Field>
-      <Field label="密码(至少 8 位)">
-        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} maxLength={72} />
-      </Field>
-      <Field label="邀请码">
-        <input value={inviteCode} onChange={(e) => setInviteCode(e.target.value)} required />
-      </Field>
-      <button type="submit" disabled={busy}>
+    <form onSubmit={submit} className="space-y-5">
+      <div>
+        <h2 className="text-2xl font-bold tracking-tight">创建账号</h2>
+        <p className="mt-1.5 text-sm text-slate-500">需要管理员发的邀请码。</p>
+      </div>
+      <div>
+        <label className="label">用户名</label>
+        <input
+          className="input"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          required
+          minLength={3}
+          maxLength={32}
+          autoFocus
+        />
+        <div className="help">3–32 位字母、数字、下划线、连字符</div>
+      </div>
+      <div>
+        <label className="label">密码</label>
+        <input
+          className="input"
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          required
+          minLength={8}
+          maxLength={72}
+        />
+        <div className="help">至少 8 位</div>
+      </div>
+      <div>
+        <label className="label">邀请码</label>
+        <input
+          className="input"
+          value={inviteCode}
+          onChange={(e) => setInviteCode(e.target.value)}
+          required
+        />
+      </div>
+      {error && <ErrorAlert>{error}</ErrorAlert>}
+      <button type="submit" className="btn-primary w-full" disabled={busy}>
         {busy ? "提交中…" : "注册"}
       </button>
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
-      <p style={{ color: "#666", fontSize: "0.9rem" }}>
-        没有邮箱找回:密码丢了只能重新注册一个用户名。
-      </p>
-      <p>
+      <InfoAlert>
+        没有邮箱找回:密码丢了只能重新注册一个用户名,SendKey 也会一起失效。
+      </InfoAlert>
+      <p className="text-sm text-slate-500 text-center">
         已经有账号?{" "}
-        <a href="#" onClick={(e) => (e.preventDefault(), onSwitchToLogin())}>
-          登录
-        </a>
+        <button
+          type="button"
+          onClick={onSwitchToLogin}
+          className="font-medium text-brand-600 hover:text-brand-700 hover:underline underline-offset-2"
+        >
+          直接登录
+        </button>
       </p>
     </form>
   );
 }
 
-function Home({
-  user,
-  onLogout,
-  onOpenBotsAdmin,
-  onOpenUsersAdmin,
-  onOpenKeysAdmin,
-  onOpenKeys,
+function Home({ user }: { user: AuthUser }): JSX.Element {
+  return (
+    <div className="space-y-8">
+      <div>
+        <p className="text-sm text-brand-600 font-medium">欢迎回来</p>
+        <h1 className="mt-1 text-3xl font-bold tracking-tight">
+          {user.username}
+          {user.isOperator && (
+            <span className="badge-brand ml-3 text-xs align-middle">
+              管理员
+            </span>
+          )}
+        </h1>
+        <p className="mt-2 text-sm text-slate-500">
+          创建 SendKey,通过 HTTP 接口把消息一行 curl 推到 QQ。
+        </p>
+      </div>
+
+      <div className="grid sm:grid-cols-2 gap-4">
+        <NavCard
+          title="我的 SendKey"
+          desc="创建、查看、删除推送 key,以及调用示例。"
+          icon="🔑"
+          onClick={() => navigate("/keys")}
+        />
+        {user.isOperator && (
+          <>
+            <NavCard
+              title="管理机器人池"
+              desc="添加 / 编辑 NapCat 机器人,查看在线状态与好友数。"
+              icon="🤖"
+              onClick={() => navigate("/admin/bots")}
+              tag="管理员"
+            />
+            <NavCard
+              title="用户管理"
+              desc="查看所有注册用户,必要时删除账号。"
+              icon="👥"
+              onClick={() => navigate("/admin/users")}
+              tag="管理员"
+            />
+            <NavCard
+              title="所有 SendKey"
+              desc="跨用户审计 SendKey,启用 / 禁用,刷新好友列表。"
+              icon="📋"
+              onClick={() => navigate("/admin/keys")}
+              tag="管理员"
+            />
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function NavCard({
+  title,
+  desc,
+  onClick,
+  icon,
+  tag,
 }: {
-  user: AuthUser;
-  onLogout: () => void;
-  onOpenBotsAdmin: () => void;
-  onOpenUsersAdmin: () => void;
-  onOpenKeysAdmin: () => void;
-  onOpenKeys: () => void;
+  title: string;
+  desc: string;
+  onClick: () => void;
+  icon: string;
+  tag?: string;
 }): JSX.Element {
   return (
-    <section style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-      <p>
-        欢迎,<strong>{user.username}</strong>
-        {user.isOperator && (
-          <span style={badgeStyle}>Operator</span>
-        )}
-      </p>
-      <button onClick={onOpenKeys} style={{ alignSelf: "flex-start" }}>
-        我的 SendKey
-      </button>
-      {user.isOperator && (
-        <>
-          <button onClick={onOpenBotsAdmin} style={{ alignSelf: "flex-start" }}>
-            管理机器人池
-          </button>
-          <button onClick={onOpenUsersAdmin} style={{ alignSelf: "flex-start" }}>
-            用户管理
-          </button>
-          <button onClick={onOpenKeysAdmin} style={{ alignSelf: "flex-start" }}>
-            所有 SendKey
-          </button>
-        </>
-      )}
-      <button onClick={onLogout}>退出登录</button>
-    </section>
+    <button
+      onClick={onClick}
+      className="card text-left p-0 hover:border-brand-300 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 group"
+    >
+      <div className="card-body">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-brand-50 text-xl ring-1 ring-brand-100">
+              {icon}
+            </span>
+            <h3 className="font-semibold text-slate-900 group-hover:text-brand-600 transition-colors">
+              {title}
+            </h3>
+          </div>
+          {tag && <span className="badge-brand">{tag}</span>}
+        </div>
+        <p className="mt-3 text-sm text-slate-500 leading-relaxed">{desc}</p>
+        <div className="mt-4 text-xs text-brand-600 font-medium opacity-0 group-hover:opacity-100 transition-opacity">
+          打开 →
+        </div>
+      </div>
+    </button>
   );
 }
-
-function Field({ label, children }: { label: string; children: React.ReactNode }): JSX.Element {
-  return (
-    <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-      <span style={{ fontSize: "0.9rem", color: "#444" }}>{label}</span>
-      {children}
-    </label>
-  );
-}
-
-const pageStyle: React.CSSProperties = {
-  fontFamily: "system-ui, sans-serif",
-  maxWidth: 480,
-  margin: "2rem auto",
-  padding: "0 1rem",
-  display: "flex",
-  flexDirection: "column",
-  gap: "1.5rem",
-};
-
-const headerStyle: React.CSSProperties = {
-  borderBottom: "1px solid #eee",
-  paddingBottom: "1rem",
-};
-
-const formStyle: React.CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  gap: "0.75rem",
-};
-
-const badgeStyle: React.CSSProperties = {
-  marginLeft: "0.5rem",
-  padding: "0.125rem 0.5rem",
-  borderRadius: 4,
-  background: "#fee",
-  color: "#a33",
-  fontSize: "0.8rem",
-};
