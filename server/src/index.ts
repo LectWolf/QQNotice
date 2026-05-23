@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import fastifyStatic from "@fastify/static";
@@ -27,33 +28,36 @@ async function main(): Promise<void> {
     app.log.info(`Promoted ${config.adminUsername} to operator`);
   }
 
-  // Reconcile every SendKey against the current snapshot. Bots may not yet
-  // have pulled their friend lists at this point — give them a brief grace
-  // window so reconcile sees a populated cache. This is best-effort: if the
-  // grace window is too short, an early send will trigger the same routing
-  // logic dynamically, and the next reconcile (e.g. on next restart) catches
-  // up.
-  setTimeout(() => {
-    const service = (app as unknown as {
-      sendKeyService?: import("./sendkey/SendKeyService.js").SendKeyService;
-    }).sendKeyService;
-    if (!service) return;
-    void service
-      .reconcileOnStartup()
-      .then((summary) => {
+  // Reconcile every SendKey against the current snapshot. Bots take a few
+  // seconds to connect → heartbeat → pull friend list, and the reconcile
+  // logic disables any key whose bound bot isn't currently alive-and-friendly.
+  // To avoid mass-disabling on every restart, wait until at least one bot
+  // is alive (with a generous cap), then run reconcile. If the cap elapses
+  // and still no bot is alive, the reconcile itself short-circuits with
+  // `skipped: true` rather than disabling everything.
+  void waitForFirstAliveBot(app, 60_000)
+    .then(() => {
+      const service = (app as unknown as {
+        sendKeyService?: import("./sendkey/SendKeyService.js").SendKeyService;
+      }).sendKeyService;
+      if (!service) return;
+      return service.reconcileOnStartup().then((summary) => {
         app.log.info(summary, "startup reconcile complete");
-      })
-      .catch((err) => {
-        app.log.error({ err }, "startup reconcile failed");
       });
-  }, 5000);
+    })
+    .catch((err) => {
+      app.log.error({ err }, "startup reconcile failed");
+    });
 
-  // In production, also serve the built React app from `web/dist` under the
-  // root path. API routes are scoped to `/api/*` and `/send*` so there is no
-  // overlap.
-  if (config.nodeEnv === "production") {
-    const here = path.dirname(fileURLToPath(import.meta.url));
-    const webDist = path.resolve(here, "../../web/dist");
+  // Serve the built React app from `web/dist` under the root path whenever
+  // it's actually present on disk. Was previously gated on NODE_ENV =
+  // production, but that's a footgun: deployers who forget to set it land
+  // on a 404 at `/`. The presence of `web/dist/index.html` is the real
+  // signal that the build artifact is co-located with the server. API
+  // routes are scoped to `/api/*` and `/send*` so there is no overlap.
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const webDist = path.resolve(here, "../../web/dist");
+  if (existsSync(path.join(webDist, "index.html"))) {
     await app.register(fastifyStatic, {
       root: webDist,
       prefix: "/",
@@ -72,6 +76,12 @@ async function main(): Promise<void> {
       }
       return reply.status(404).send({ code: 404, message: "not found" });
     });
+    app.log.info({ webDist }, "serving web bundle from disk");
+  } else {
+    app.log.warn(
+      { webDist },
+      "web/dist not found — running API-only. Build the web bundle and re-deploy if you expected the UI here.",
+    );
   }
 
   await app.listen({ host: "0.0.0.0", port: config.port });
@@ -93,3 +103,24 @@ main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
+
+/**
+ * Polls the BotManager status until at least one bot is `alive` (open WS +
+ * fresh heartbeat), or `maxWaitMs` elapses. Resolves either way; the caller
+ * decides what to do next.
+ */
+async function waitForFirstAliveBot(
+  app: import("fastify").FastifyInstance,
+  maxWaitMs: number,
+): Promise<void> {
+  const deadline = Date.now() + maxWaitMs;
+  const manager = (app as unknown as {
+    botManager?: import("./bot/BotManager.js").BotManager;
+  }).botManager;
+
+  while (Date.now() < deadline) {
+    const status = manager?.listStatus() ?? [];
+    if (status.some((s) => s.alive)) return;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}
