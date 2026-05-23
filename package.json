@@ -4,7 +4,10 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "test": "pnpm -r --if-present test"
+    "test": "pnpm -r --if-present test",
+    "setup": "pnpm install --prod --frozen-lockfile && pnpm -C server generate && pnpm migrate",
+    "migrate": "pnpm -C server prisma migrate deploy",
+    "start": "pnpm -C server start"
   },
   "packageManager": "pnpm@9.0.0"
 }
