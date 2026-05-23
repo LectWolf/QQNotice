@@ -245,3 +245,108 @@ describe("/api/admin/bots", () => {
     expect(del.statusCode).toBe(403);
   });
 });
+
+describe("/api/bots (sanitized public listing)", () => {
+  const prisma = getTestPrisma();
+  let app: FastifyInstance;
+  let userToken: string;
+  let manager: BotManager;
+
+  beforeEach(async () => {
+    await resetDb(prisma);
+    if (app) await app.close();
+    manager = new BotManager({ prisma, clientFactory: stubFactory });
+    app = await createApp({ config, prisma, botManager: manager });
+
+    const reg = await app.inject({
+      method: "POST",
+      url: "/api/auth/register",
+      payload: { username: "alice", password: "hunter2hunter2", inviteCode },
+    });
+    userToken = reg.json().data.token;
+  });
+
+  afterAll(async () => {
+    if (app) await app.close();
+    await prisma.$disconnect();
+  });
+
+  it("returns 401 without a token", async () => {
+    const res = await app.inject({ method: "GET", url: "/api/bots" });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it("exposes only qq, name, alive — never wsUrl, accessToken, or heartbeat internals", async () => {
+    (manager as unknown as { listStatus: () => unknown[] }).listStatus = () => [
+      {
+        botId: 1,
+        qq: 10001,
+        name: "primary",
+        enabled: true,
+        wsState: "open",
+        lastHeartbeatAt: 12345,
+        heartbeatInterval: 5000,
+        online: true,
+        alive: true,
+        friendCount: 7,
+      },
+    ];
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/bots",
+      headers: { authorization: `Bearer ${userToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const data = res.json().data;
+    expect(data).toHaveLength(1);
+    expect(data[0]).toEqual({
+      qq: 10001,
+      name: "primary",
+      alive: true,
+    });
+    expect(data[0]).not.toHaveProperty("wsUrl");
+    expect(data[0]).not.toHaveProperty("accessToken");
+    expect(data[0]).not.toHaveProperty("heartbeatInterval");
+    expect(data[0]).not.toHaveProperty("lastHeartbeatAt");
+    expect(data[0]).not.toHaveProperty("friendCount");
+  });
+
+  it("hides bots whose enabled flag is false", async () => {
+    (manager as unknown as { listStatus: () => unknown[] }).listStatus = () => [
+      {
+        botId: 1,
+        qq: 10001,
+        name: "active",
+        enabled: true,
+        wsState: "open",
+        lastHeartbeatAt: 0,
+        heartbeatInterval: null,
+        online: false,
+        alive: false,
+        friendCount: 0,
+      },
+      {
+        botId: 2,
+        qq: 10002,
+        name: "retired",
+        enabled: false,
+        wsState: "closed",
+        lastHeartbeatAt: 0,
+        heartbeatInterval: null,
+        online: false,
+        alive: false,
+        friendCount: 0,
+      },
+    ];
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/bots",
+      headers: { authorization: `Bearer ${userToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const data = res.json().data;
+    expect(data).toHaveLength(1);
+    expect(data[0].name).toBe("active");
+  });
+});
+

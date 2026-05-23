@@ -51,6 +51,34 @@ export function registerBotAdminRoutes(
     }
   });
 
+  // Public-but-authenticated bot listing for end users. Exposes only the
+  // fields a user needs to add the bot as a friend (qq, name, alive). No
+  // wsUrl, no access token, no heartbeat internals.
+  app.get("/api/bots", async (req, reply) => {
+    try {
+      requireAuth(req);
+      const all = deps.manager.listStatus();
+      return reply.send({
+        code: 0,
+        message: "ok",
+        data: all
+          .filter((b) => b.enabled)
+          .map((b) => ({
+            qq: b.qq,
+            name: b.name,
+            alive: b.alive,
+          })),
+      });
+    } catch (err) {
+      if (err instanceof UnauthenticatedError) {
+        return reply
+          .status(401)
+          .send({ code: 401, message: "unauthenticated" });
+      }
+      throw err;
+    }
+  });
+
   app.post<{
     Body: {
       name?: string;
@@ -152,6 +180,9 @@ export function registerBotAdminRoutes(
 
         try {
           await deps.prisma.bot.update({ where: { id }, data });
+          // Reconcile immediately so URL/token changes pick up the new
+          // connection without waiting for the next 3-second tick.
+          await deps.manager.reconcileNow().catch(() => {});
           return reply.send({ code: 0, message: "ok" });
         } catch (err) {
           if (err instanceof Prisma.PrismaClientKnownRequestError) {
@@ -190,6 +221,7 @@ export function registerBotAdminRoutes(
         const id = Number(req.params.id);
         try {
           await deps.prisma.bot.delete({ where: { id } });
+          await deps.manager.reconcileNow().catch(() => {});
           return reply.send({ code: 0, message: "ok" });
         } catch (err) {
           if (
