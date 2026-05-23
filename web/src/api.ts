@@ -55,6 +55,35 @@ export type PendingHandshake = {
   expiresAt: number;
 };
 
+/**
+ * One row from the SendLog audit trail. `statusCode === 0` means the QQ
+ * message was delivered; non-zero codes mirror the failure HTTP status
+ * (401, 502, 503), with `reason` carrying the machine-readable code
+ * (`send_failed`, `no_alive_friendly_bot`, etc).
+ */
+export type SendLogEntry = {
+  id: number;
+  sendKeyId: number;
+  botId: number | null;
+  targetQq: number;
+  title: string | null;
+  content: string;
+  statusCode: number;
+  reason: string | null;
+  durationMs: number;
+  hasAttachment: boolean;
+  createdAt: string;
+};
+
+export type MySendLogEntry = SendLogEntry & {
+  keyName: string;
+};
+
+export type AdminSendLogEntry = MySendLogEntry & {
+  userId: number;
+  username: string;
+};
+
 const TOKEN_KEY = "qqnotice.token";
 
 export function getToken(): string | null {
@@ -130,6 +159,13 @@ export const api = {
     request("DELETE", `/api/me/keys/${id}`),
   testSendKey: (id: number) =>
     request("POST", `/api/me/keys/${id}/test`, {}),
+  listSendKeyLogs: (id: number, limit = 50) =>
+    request<SendLogEntry[]>(
+      "GET",
+      `/api/me/keys/${id}/logs?limit=${limit}`,
+    ),
+  listMyLogs: (limit = 100) =>
+    request<MySendLogEntry[]>("GET", `/api/me/logs?limit=${limit}`),
 
   // Operator: users / keys / friendships
   listUsers: () =>
@@ -165,5 +201,10 @@ export const api = {
     request<{ refreshed: number; skipped: number; durationMs: number }>(
       "POST",
       "/api/admin/friendships/refresh",
+    ),
+  listAdminLogs: (limit = 200) =>
+    request<AdminSendLogEntry[]>(
+      "GET",
+      `/api/admin/logs?limit=${limit}`,
     ),
 };

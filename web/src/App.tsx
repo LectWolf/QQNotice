@@ -3,6 +3,7 @@ import { api, getToken, setToken, type AuthUser } from "./api.js";
 import { BotsAdmin } from "./BotsAdmin.js";
 import { SendKeys } from "./SendKeys.js";
 import { AdminKeys, AdminUsers } from "./AdminConsole.js";
+import { AdminLogs, MyLogs } from "./Logs.js";
 import { ErrorAlert, InfoAlert } from "./ui.js";
 import { translateError } from "./errors.js";
 import { navigate, useRoute } from "./router.js";
@@ -130,6 +131,12 @@ function Routes({
         <SendKeys />
       </SubPage>
     );
+  if (route === "/me/logs")
+    return (
+      <SubPage onBack={() => navigate("/")}>
+        <MyLogs />
+      </SubPage>
+    );
   if (route === "/admin/bots" && user.isOperator)
     return (
       <SubPage onBack={() => navigate("/")}>
@@ -146,6 +153,12 @@ function Routes({
     return (
       <SubPage onBack={() => navigate("/")}>
         <AdminKeys />
+      </SubPage>
+    );
+  if (route === "/admin/logs" && user.isOperator)
+    return (
+      <SubPage onBack={() => navigate("/")}>
+        <AdminLogs />
       </SubPage>
     );
 
@@ -414,6 +427,12 @@ function Home({ user }: { user: AuthUser }): JSX.Element {
           icon="🔑"
           onClick={() => navigate("/keys")}
         />
+        <NavCard
+          title="我的发送日志"
+          desc="查看每一次 SendKey 调用的详情、目标、用时和成功失败。"
+          icon="📜"
+          onClick={() => navigate("/me/logs")}
+        />
         {user.isOperator && (
           <>
             <NavCard
@@ -435,6 +454,13 @@ function Home({ user }: { user: AuthUser }): JSX.Element {
               desc="跨用户审计 SendKey,启用 / 禁用,刷新好友列表。"
               icon="📋"
               onClick={() => navigate("/admin/keys")}
+              tag="管理员"
+            />
+            <NavCard
+              title="调用日志"
+              desc="跨用户查看每一次 /send 调用,定位失败原因。"
+              icon="🔍"
+              onClick={() => navigate("/admin/logs")}
               tag="管理员"
             />
           </>

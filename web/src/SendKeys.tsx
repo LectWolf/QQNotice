@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type PublicBot, type SendKey } from "./api.js";
 import { translateError } from "./errors.js";
 import { copyToClipboard } from "./clipboard.js";
+import { SendKeyLogsDrawer } from "./Logs.js";
 import { ErrorAlert, PopConfirm, useToast } from "./ui.js";
 
 export function SendKeys(): JSX.Element {
@@ -329,6 +330,7 @@ function SendKeyRow({
   onChanged: () => void;
 }): JSX.Element {
   const [testing, setTesting] = useState(false);
+  const [logsOpen, setLogsOpen] = useState(false);
   const toast = useToast();
 
   async function runTest(): Promise<void> {
@@ -413,6 +415,13 @@ function SendKeyRow({
       <td className="text-right whitespace-nowrap">
         <button
           className="btn-ghost btn-sm"
+          onClick={() => setLogsOpen(true)}
+          title="查看这个 key 最近的调用日志"
+        >
+          日志
+        </button>
+        <button
+          className="btn-ghost btn-sm ml-1"
           onClick={runTest}
           disabled={testing || item.state !== "active"}
           title={
@@ -441,6 +450,13 @@ function SendKeyRow({
             </button>
           )}
         </PopConfirm>
+        {logsOpen && (
+          <SendKeyLogsDrawer
+            sendKeyId={item.id}
+            keyName={item.name}
+            onClose={() => setLogsOpen(false)}
+          />
+        )}
       </td>
     </tr>
   );
