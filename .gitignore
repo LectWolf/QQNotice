@@ -12,6 +12,9 @@ dist/
 *.log
 *.tsbuildinfo
 
+# Release artefacts
+release/
+
 # Prisma
 server/.env
 server/prisma/migrations/dev.db*
