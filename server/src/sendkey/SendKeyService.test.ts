@@ -199,8 +199,12 @@ describe("SendKeyService.listForUser", () => {
     });
   });
 
-  it("returns the caller's keys without plaintext or hash", async () => {
-    await service.create({ userId: aliceId, name: "ci", targetQq: 999 });
+  it("returns the caller's keys with plaintext (re-copyable) but never the hash", async () => {
+    const created = await service.create({
+      userId: aliceId,
+      name: "ci",
+      targetQq: 999,
+    });
     await service.create({ userId: aliceId, name: "ha", targetQq: 999 });
     await service.create({ userId: bobId, name: "bobs", targetQq: 999 });
 
@@ -208,11 +212,13 @@ describe("SendKeyService.listForUser", () => {
 
     expect(list).toHaveLength(2);
     for (const item of list) {
-      expect(item).not.toHaveProperty("plaintext");
       expect(item).not.toHaveProperty("keyHash");
       expect(item).toMatchObject({ targetQq: 999, state: "active" });
       expect(item.prefix).toMatch(/^sk_[A-Za-z0-9_-]{5}$/);
+      expect(item.plaintext).toMatch(/^sk_/);
     }
+    const ciItem = list.find((k) => k.name === "ci");
+    expect(ciItem!.plaintext).toBe(created.plaintext);
     const names = list.map((k) => k.name).sort();
     expect(names).toEqual(["ci", "ha"]);
   });
@@ -461,7 +467,7 @@ describe("SendKeyService.reconcileOnStartup", () => {
     });
 
     const summary = await service.reconcileOnStartup();
-    expect(summary).toEqual({ leftAlone: 1, rebound: 0, disabled: 0 });
+    expect(summary).toEqual({ leftAlone: 1, rebound: 0, disabled: 0, skipped: false });
 
     const after = await prisma.sendKey.findUniqueOrThrow({
       where: { id: key.id },
@@ -499,7 +505,7 @@ describe("SendKeyService.reconcileOnStartup", () => {
     });
 
     const summary = await service.reconcileOnStartup();
-    expect(summary).toEqual({ leftAlone: 0, rebound: 1, disabled: 0 });
+    expect(summary).toEqual({ leftAlone: 0, rebound: 1, disabled: 0, skipped: false });
 
     const after = await prisma.sendKey.findUniqueOrThrow({
       where: { id: key.id },
@@ -536,12 +542,49 @@ describe("SendKeyService.reconcileOnStartup", () => {
     });
 
     const summary = await service.reconcileOnStartup();
-    expect(summary).toEqual({ leftAlone: 0, rebound: 0, disabled: 1 });
+    expect(summary).toEqual({ leftAlone: 0, rebound: 0, disabled: 1, skipped: false });
 
     const after = await prisma.sendKey.findUniqueOrThrow({
       where: { id: key.id },
     });
     expect(after.state).toBe("disabled");
+  });
+
+  it("skips reconcile when no bot is currently alive (startup race) — keys remain active", async () => {
+    const bot = await prisma.bot.create({
+      data: { name: "A", qq: BigInt(10001), wsUrl: "ws://x" },
+    });
+    const key = await prisma.sendKey.create({
+      data: {
+        userId: aliceId,
+        name: "ci",
+        targetQq: BigInt(999),
+        botId: bot.id,
+        keyHash: "h",
+        prefix: "p",
+      },
+    });
+    const cache = new FriendshipCache();
+    const service = new SendKeyService({
+      prisma,
+      botManager: await makeAliveManager(prisma, []), // pool not yet ready
+      friendshipCache: cache,
+      router: new Router(),
+      bcryptCost: 4,
+    });
+
+    const summary = await service.reconcileOnStartup();
+    expect(summary).toEqual({
+      leftAlone: 0,
+      rebound: 0,
+      disabled: 0,
+      skipped: true,
+    });
+
+    const after = await prisma.sendKey.findUniqueOrThrow({
+      where: { id: key.id },
+    });
+    expect(after.state).toBe("active");
   });
 
   it("skips already-disabled keys", async () => {
@@ -569,6 +612,6 @@ describe("SendKeyService.reconcileOnStartup", () => {
     });
 
     const summary = await service.reconcileOnStartup();
-    expect(summary).toEqual({ leftAlone: 0, rebound: 0, disabled: 0 });
+    expect(summary).toEqual({ leftAlone: 0, rebound: 0, disabled: 0, skipped: false });
   });
 });

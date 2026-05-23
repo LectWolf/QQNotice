@@ -106,6 +106,7 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
   // reconcileOnStartup after the bot pool has had a chance to settle.
   (app as unknown as { sendKeyService: SendKeyService }).sendKeyService =
     sendKeyService;
+  (app as unknown as { botManager: BotManager }).botManager = botManager;
 
   if (deps.config.nodeEnv !== "production") {
     registerProbeRoute(app);

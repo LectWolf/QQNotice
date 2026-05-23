@@ -49,20 +49,23 @@ model Friendship {
 }
 
 // One pre-shared credential the caller includes in every Send request.
-// Plaintext is generated server-side, returned exactly once at creation,
-// and never stored: only `keyHash` (bcrypt) and `prefix` (first 8 chars,
-// for UI identification) live in the DB.
+// Plaintext is generated server-side and stored alongside the bcrypt hash
+// so the user can re-copy it from the management UI. The hash is what the
+// /send endpoint validates against — even if the table is dumped, callers
+// still need a valid plaintext to send. `prefix` (first 8 chars) doubles as
+// a fast lookup key for the bcrypt verify step.
 model SendKey {
-  id         Int       @id @default(autoincrement())
-  userId     Int
-  name       String    @db.VarChar(64)
-  targetQq   BigInt
-  botId      Int
-  state      String    @default("active") @db.VarChar(16)
-  keyHash    String    @db.VarChar(72)
-  prefix     String    @db.VarChar(16)
-  createdAt  DateTime  @default(now())
-  lastUsedAt DateTime?
+  id            Int       @id @default(autoincrement())
+  userId        Int
+  name          String    @db.VarChar(64)
+  targetQq      BigInt
+  botId         Int
+  state         String    @default("active") @db.VarChar(16)
+  keyHash       String    @db.VarChar(72)
+  keyPlaintext  String?   @db.VarChar(64)
+  prefix        String    @db.VarChar(16)
+  createdAt     DateTime  @default(now())
+  lastUsedAt    DateTime?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   bot  Bot  @relation(fields: [botId], references: [id])

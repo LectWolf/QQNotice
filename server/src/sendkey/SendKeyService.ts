@@ -69,6 +69,12 @@ export type SendKeyListItem = {
   targetQq: number;
   botId: number;
   prefix: string;
+  /**
+   * The full plaintext key, when known. Newly created keys always have a
+   * value here; legacy rows from before plaintext storage was added expose
+   * `null` and the UI falls back to the prefix-only chip.
+   */
+  plaintext: string | null;
   state: "active" | "disabled";
   createdAt: string;
   lastUsedAt: string | null;
@@ -222,6 +228,7 @@ export class SendKeyService {
         targetQq: BigInt(args.targetQq),
         botId: args.botId,
         keyHash,
+        keyPlaintext: plaintext,
         prefix,
       },
     });
@@ -247,16 +254,28 @@ export class SendKeyService {
    * - Bound bot alive AND friendship intact -> leave.
    * - Bound bot dead OR friendship lost, alternative alive friendly bot -> rebind.
    * - No alive friendly bot -> mark state=disabled.
+   *
+   * Safety guard: if the bot pool currently has zero alive bots, this is
+   * almost certainly a startup race (bots haven't connected / heartbeat /
+   * pulled friend list yet) rather than a real outage. Skipping prevents
+   * the reconciler from disabling every key in the system. The caller
+   * (entrypoint) is responsible for waiting until at least one bot is alive.
    */
   async reconcileOnStartup(): Promise<{
     leftAlone: number;
     rebound: number;
     disabled: number;
+    skipped: boolean;
   }> {
     const aliveBots = this.botManager
       .listStatus()
       .filter((s) => s.alive)
       .map((s) => ({ id: s.botId, alive: true }));
+
+    if (aliveBots.length === 0) {
+      return { leftAlone: 0, rebound: 0, disabled: 0, skipped: true };
+    }
+
     const snapshot = { bots: aliveBots, cache: this.friendshipCache };
 
     const keys = await this.prisma.sendKey.findMany({
@@ -292,7 +311,7 @@ export class SendKeyService {
       disabled++;
     }
 
-    return { leftAlone, rebound, disabled };
+    return { leftAlone, rebound, disabled, skipped: false };
   }
 
   async listForUser(userId: number): Promise<SendKeyListItem[]> {
@@ -306,6 +325,7 @@ export class SendKeyService {
       targetQq: Number(row.targetQq),
       botId: row.botId,
       prefix: row.prefix,
+      plaintext: row.keyPlaintext,
       state: row.state as "active" | "disabled",
       createdAt: row.createdAt.toISOString(),
       lastUsedAt: row.lastUsedAt ? row.lastUsedAt.toISOString() : null,
@@ -318,6 +338,97 @@ export class SendKeyService {
     });
     if (result.count === 0) {
       throw new SendKeyError(404, "send_key_not_found");
+    }
+  }
+
+  /**
+   * Send a test message via this SendKey, owner-only. Mirrors the routing
+   * decisions of the live /send pipeline (Router.decideOnSend → rebind on
+   * dead bot → drop friendship + retry once on send failure) but bypasses
+   * authentication-by-plaintext since the caller already proved ownership
+   * via JWT. Returns the QQ message_id when NapCat reports one.
+   */
+  async sendTest(
+    userId: number,
+    sendKeyId: number,
+    content: string,
+  ): Promise<void> {
+    const row = await this.prisma.sendKey.findFirst({
+      where: { id: sendKeyId, userId },
+    });
+    if (!row) throw new SendKeyError(404, "send_key_not_found");
+    if (row.state !== "active") {
+      throw new SendKeyError(401, "send_key_disabled");
+    }
+
+    const targetQq = Number(row.targetQq);
+    const snapshotBots = () =>
+      this.botManager.listStatus().map((s) => ({
+        id: s.botId,
+        alive: s.alive,
+      }));
+
+    const decide = () =>
+      this.router.decideOnSend(
+        { boundBotId: row.botId, targetQq },
+        { bots: snapshotBots(), cache: this.friendshipCache },
+      );
+
+    // Follows CONTEXT.md "Notification" rendering rule: `【title】\ncontent`.
+    const message = `【测试】\n${content}`;
+
+    let decision = decide();
+    if (decision.kind === "fail") {
+      throw new SendKeyError(
+        decision.httpCode === 503 ? 401 : 401, // surface as auth-shaped 4xx for the UI; 502/503 reasons translate fine
+        decision.reason,
+      );
+    }
+
+    let botId =
+      decision.kind === "send" ? decision.botId : decision.newBotId;
+
+    if (decision.kind === "rebindAndSend") {
+      await this.prisma.sendKey.update({
+        where: { id: row.id },
+        data: { botId: decision.newBotId },
+      });
+    }
+
+    try {
+      await this.botManager.request(botId, "send_private_msg", {
+        user_id: targetQq,
+        message,
+      });
+      return;
+    } catch {
+      // Fall through to retry path.
+    }
+
+    this.friendshipCache.drop(botId, targetQq);
+    this.botManager.markSendFailure(botId);
+
+    const retry = this.router.decideOnSend(
+      { boundBotId: botId, targetQq },
+      { bots: snapshotBots(), cache: this.friendshipCache },
+    );
+    if (retry.kind === "fail") {
+      throw new SendKeyError(401, retry.reason);
+    }
+    botId = retry.kind === "send" ? retry.botId : retry.newBotId;
+    if (retry.kind === "rebindAndSend") {
+      await this.prisma.sendKey.update({
+        where: { id: row.id },
+        data: { botId: retry.newBotId },
+      });
+    }
+    try {
+      await this.botManager.request(botId, "send_private_msg", {
+        user_id: targetQq,
+        message,
+      });
+    } catch {
+      throw new SendKeyError(401, "send_failed");
     }
   }
 

@@ -50,6 +50,7 @@ export function registerKeyAdminRoutes(
           botId: r.botId,
           state: r.state,
           prefix: r.prefix,
+          plaintext: r.keyPlaintext,
           createdAt: r.createdAt.toISOString(),
           lastUsedAt: r.lastUsedAt ? r.lastUsedAt.toISOString() : null,
         })),

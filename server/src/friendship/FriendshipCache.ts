@@ -34,4 +34,13 @@ export class FriendshipCache {
   replaceAllForBot(botId: number, qqs: number[]): void {
     this.byBot.set(botId, new Set(qqs));
   }
+
+  /**
+   * Returns a read-only view of the underlying `(botId -> qqSet)` map. Used
+   * by BotManager to compute friendCount. Mutating the returned structure
+   * is undefined behaviour; treat it as read-only.
+   */
+  snapshot(): Map<number, Set<number>> {
+    return this.byBot;
+  }
 }

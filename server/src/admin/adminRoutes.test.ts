@@ -288,7 +288,10 @@ describe("/api/admin/keys", () => {
       targetQq: 999,
       state: "active",
     });
-    expect(list[0]).not.toHaveProperty("plaintext");
+    // plaintext is exposed so operators (and the owning user) can re-copy
+    // the key from the management UI; the bcrypt hash never goes over the
+    // wire.
+    expect(list[0]).toHaveProperty("plaintext");
     expect(list[0]).not.toHaveProperty("keyHash");
   });
 

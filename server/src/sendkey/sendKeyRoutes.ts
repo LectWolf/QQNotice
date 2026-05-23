@@ -151,4 +151,46 @@ export function registerSendKeyRoutes(
       }
     },
   );
+
+  app.post<{ Params: { id: string }; Body: { content?: string } }>(
+    "/api/me/keys/:id/test",
+    {
+      schema: {
+        params: {
+          type: "object",
+          required: ["id"],
+          properties: { id: { type: "string", pattern: "^[0-9]+$" } },
+        },
+        body: {
+          type: "object",
+          properties: {
+            content: { type: "string", minLength: 1, maxLength: 200 },
+          },
+        },
+      },
+    },
+    async (req, reply) => {
+      try {
+        const user = requireAuth(req);
+        const content =
+          req.body.content && req.body.content.trim().length > 0
+            ? req.body.content
+            : "这是来自 QQNotice 的测试消息";
+        await service.sendTest(user.id, Number(req.params.id), content);
+        return reply.send({ code: 0, message: "ok" });
+      } catch (err) {
+        if (err instanceof UnauthenticatedError) {
+          return reply
+            .status(401)
+            .send({ code: 401, message: "unauthenticated" });
+        }
+        if (err instanceof SendKeyError) {
+          return reply
+            .status(err.httpCode)
+            .send({ code: err.httpCode, message: err.reason });
+        }
+        throw err;
+      }
+    },
+  );
 }

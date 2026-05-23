@@ -152,7 +152,9 @@ export class BotManager {
         sendFailureShortCircuitUntil: entry.sendFailureShortCircuitUntil,
         now,
       }),
-      friendCount: 0,
+      friendCount: this.friendshipCache
+        ? Array.from(this.friendshipCache.snapshot().get(entry.row.id) ?? []).length
+        : 0,
     }));
   }
 
@@ -170,6 +172,15 @@ export class BotManager {
       throw new Error(`bot ${botId} not connected`);
     }
     return entry.client.request<T>(action, params);
+  }
+
+  /**
+   * Force an immediate reconcile against the DB. The HTTP layer calls this
+   * after Bot CRUD so newly-created or edited rows pick up their connection
+   * without waiting for the next 3-second tick.
+   */
+  async reconcileNow(): Promise<void> {
+    await this.reconcile();
   }
 
   /**
@@ -327,8 +338,6 @@ export class BotManager {
             : Number((obj.self_id as unknown) ?? NaN);
 
         if (Number.isFinite(selfId) && selfId !== Number(entry.row.qq)) {
-          // Mismatch — keep alive=false. (Logged once per occurrence in
-          // production via app.log; tests don't need the warn.)
           entry.online = false;
           return;
         }
@@ -339,8 +348,6 @@ export class BotManager {
         entry.online = online;
         if (!entry.firstHeartbeatSeen) {
           entry.firstHeartbeatSeen = true;
-          // First-heartbeat dump is the deployment-grade log; tests assert
-          // observable status, not log lines.
         }
         // Pull the friend list once after the bot first becomes alive on
         // this connection. Re-runs on reconnect because friendsPulled is
@@ -365,7 +372,6 @@ export class BotManager {
       client.on("friendRequest", (qq, flag) => {
         if (!this.friendshipCache || !this.pendingKeys) return;
         if (!this.pendingKeys.isPending(qq, entry.row.id, this.now())) return;
-        // Auto-approve, then add the (botId, qq) pair to the cache.
         const c = entry.client;
         if (!c) return;
         void c
@@ -373,10 +379,7 @@ export class BotManager {
           .then(() => {
             this.friendshipCache!.add(entry.row.id, qq);
           })
-          .catch(() => {
-            // Best-effort; the user can retry. Cache is not updated on
-            // failure.
-          });
+          .catch(() => {});
       });
 
       client.connect();
